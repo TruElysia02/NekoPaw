@@ -1,0 +1,19 @@
+# PlatformIO
+.pio/
+**/.pio/
+.pio-core/
+.pio_core*/
+.pio_build*/
+platformio_override.ini
+
+# Editors
+.vscode/
+.idea/
+*.code-workspace
+
+# Python
+__pycache__/
+*.pyc
+
+# Local docs (kept private)
+docs/

@@ -1,0 +1,5 @@
+NekoPaw	KEYWORD1
+DisplayProvider	KEYWORD1
+SensorProvider	KEYWORD1
+InputProvider	KEYWORD1
+OutputProvider	KEYWORD1
