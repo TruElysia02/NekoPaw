@@ -2,6 +2,8 @@
 
 namespace nekopaw {
 
+NekoPaw::NekoPaw() = default;
+
 NekoPaw::NekoPaw(const Config& config) : config_(config) {}
 
 void NekoPaw::setDisplay(DisplayProvider* provider) { display_ = provider; }

@@ -17,7 +17,8 @@ public:
     const char* description = nullptr;
   };
 
-  explicit NekoPaw(const Config& config = Config{});
+  NekoPaw();
+  explicit NekoPaw(const Config& config);
 
   void setDisplay(DisplayProvider* provider);
   void addSensor(SensorProvider* provider);
