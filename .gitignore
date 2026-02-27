@@ -17,3 +17,6 @@ __pycache__/
 
 # Local docs (kept private)
 docs/
+
+# Local agent instructions (keep private)
+AGENTS.md
