@@ -1,0 +1,35 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+class WebServer;
+
+namespace nekopaw {
+
+class NekoPaw;
+
+class CommandDispatcher {
+public:
+  explicit CommandDispatcher(NekoPaw& paw);
+
+  int handleDevice(WebServer& server);
+  int handleDisplayText(WebServer& server);
+  void handleDisplayBitmapRaw(WebServer& server);
+  int handleDisplayBitmap(WebServer& server);
+  int handleDisplayState(WebServer& server);
+  int handleDeviceDescriptionPatch(WebServer& server);
+  int handleNotFound(WebServer& server);
+
+private:
+  NekoPaw& paw_;
+  uint8_t* bitmapBuffer_ = nullptr;
+  size_t bitmapBufferCapacity_ = 0;
+  size_t bitmapLength_ = 0;
+  bool bitmapOverflow_ = false;
+
+  size_t expectedBitmapBytes() const;
+  int sendDisplayUnavailable(WebServer& server);
+};
+
+} // namespace nekopaw

@@ -15,5 +15,7 @@ Examples:
 
 ```bash
 python3 skill/bridge_cli.py device info
+python3 skill/bridge_cli.py device set-description --description "Living room e-ink ticker"
 python3 skill/bridge_cli.py display text --body "Hello NekoPaw"
+python3 skill/bridge_cli.py display state
 ```

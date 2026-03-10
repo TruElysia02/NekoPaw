@@ -1,9 +1,7 @@
 #pragma once
 
+#include <ArduinoJson.h>
 #include <stdint.h>
-
-// Forward declaration — ArduinoJson
-class JsonObject;
 
 namespace nekopaw {
 
@@ -21,7 +19,7 @@ public:
   /// Execute a command described by JSON params.
   /// Example LED:    { "action":"set", "color":"green", "duration":3000 }
   /// Example Buzzer: { "action":"beep", "frequency":1000, "duration":200, "count":2 }
-  virtual bool execute(const JsonObject& params) = 0;
+  virtual bool execute(ArduinoJson::JsonObjectConst params) = 0;
 
   /// Non-blocking update (PWM animations, timed-off, etc.). Called from NekoPaw::loop().
   virtual void tick() = 0;

@@ -32,20 +32,35 @@ def _headers(api_key: str | None) -> dict[str, str]:
     return {"X-API-Key": api_key}
 
 
-def _get_json(base_url: str, path: str, *, params: dict[str, str] | None = None) -> dict:
-    url = base_url.rstrip("/") + path
-    r = requests.get(url, params=params, timeout=10)
-    r.raise_for_status()
-    return r.json()
-
-
-def _post_json(
-    base_url: str, path: str, *, params: dict[str, str] | None, payload: dict, api_key: str | None
+def _request_json(
+    method: str,
+    base_url: str,
+    path: str,
+    *,
+    params: dict[str, str] | None = None,
+    payload: dict | None = None,
+    api_key: str | None = None,
 ) -> dict:
     url = base_url.rstrip("/") + path
-    r = requests.post(url, params=params, json=payload, headers=_headers(api_key), timeout=10)
+    r = requests.request(method, url, params=params, json=payload, headers=_headers(api_key), timeout=10)
     r.raise_for_status()
     return r.json()
+
+
+def _get_json(
+    base_url: str, path: str, *, params: dict[str, str] | None = None, api_key: str | None = None
+) -> dict:
+    return _request_json("GET", base_url, path, params=params, api_key=api_key)
+
+
+def _post_json(base_url: str, path: str, *, params: dict[str, str] | None, payload: dict, api_key: str | None) -> dict:
+    return _request_json("POST", base_url, path, params=params, payload=payload, api_key=api_key)
+
+
+def _patch_json(
+    base_url: str, path: str, *, params: dict[str, str] | None, payload: dict, api_key: str | None
+) -> dict:
+    return _request_json("PATCH", base_url, path, params=params, payload=payload, api_key=api_key)
 
 
 def _post_bytes(
@@ -65,7 +80,20 @@ def _maybe_device_params(device_id: str | None) -> dict[str, str] | None:
 
 
 def cmd_device_info(args: argparse.Namespace) -> int:
-    resp = _get_json(args.url, "/api/bridge/device", params=_maybe_device_params(args.device))
+    resp = _get_json(args.url, "/api/bridge/device", params=_maybe_device_params(args.device), api_key=args.api_key)
+    print(json.dumps(resp, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_device_set_description(args: argparse.Namespace) -> int:
+    payload = {"description": args.description}
+    resp = _patch_json(
+        args.url,
+        "/api/bridge/device/description",
+        params=_maybe_device_params(args.device),
+        payload=payload,
+        api_key=args.api_key,
+    )
     print(json.dumps(resp, ensure_ascii=False, indent=2))
     return 0
 
@@ -107,6 +135,12 @@ def cmd_display_bitmap(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_display_state(args: argparse.Namespace) -> int:
+    resp = _get_json(args.url, "/api/bridge/display/state", params=_maybe_device_params(args.device), api_key=args.api_key)
+    print(json.dumps(resp, ensure_ascii=False, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="bridge_cli.py", description="NekoPaw Bridge API helper")
     p.add_argument("--url", default=_default_url())
@@ -119,6 +153,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub_device = p_device.add_subparsers(dest="device_cmd", required=True)
     p_device_info = sub_device.add_parser("info", help="GET /api/bridge/device")
     p_device_info.set_defaults(func=cmd_device_info)
+    p_device_set_description = sub_device.add_parser("set-description", help="PATCH /api/bridge/device/description")
+    p_device_set_description.add_argument("--description", required=True, help="Human-readable device description")
+    p_device_set_description.set_defaults(func=cmd_device_set_description)
 
     p_display = sub.add_parser("display", help="Display endpoints")
     sub_display = p_display.add_subparsers(dest="display_cmd", required=True)
@@ -137,6 +174,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_bitmap.add_argument("--refresh", default=None, choices=["partial", "full"])
     p_bitmap.add_argument("--ttl", type=int, default=None)
     p_bitmap.set_defaults(func=cmd_display_bitmap)
+
+    p_state = sub_display.add_parser("state", help="GET /api/bridge/display/state")
+    p_state.set_defaults(func=cmd_display_state)
 
     return p
 
