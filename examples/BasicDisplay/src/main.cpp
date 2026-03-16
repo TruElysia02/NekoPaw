@@ -79,6 +79,16 @@ nekopaw::GxEPD2DisplayAdapter<ExampleDisplay> display(epd, kDisplayPins, kDispla
 const nekopaw::NekoPaw::Config kPawConfig = makePawConfig();
 nekopaw::NekoPaw paw(kPawConfig);
 
+void showScreen(const char* title, const String& body, const char* footer = nullptr, const char* style = "default",
+                bool fullRefresh = true) {
+  nekopaw::DisplayProvider::TextContent content;
+  content.title = title;
+  content.body = body.c_str();
+  content.footer = footer;
+  content.style = style;
+  (void)display.showText(content, fullRefresh);
+}
+
 void connectWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(NEKOPAW_WIFI_SSID, NEKOPAW_WIFI_PASSWORD);
@@ -92,6 +102,27 @@ void connectWiFi() {
   Serial.println();
 }
 
+void showMissingCredentialsScreen() {
+  showScreen("NekoPaw", "WiFi credentials missing.\nEdit platformio_override.ini", "Need SSID + PASSWORD", "alert");
+}
+
+void showConnectingScreen() {
+  String body = "Connecting to WiFi...\nSSID: ";
+  body += NEKOPAW_WIFI_SSID;
+  showScreen("NekoPaw", body, "Waiting for network", "default");
+}
+
+void showWiFiFailureScreen() {
+  showScreen("NekoPaw", "WiFi connection failed.\nCheck SSID/password", "Bridge offline", "alert");
+}
+
+void showWelcomeScreen(const String& ip) {
+  String body = "WiFi connected.\nIP: ";
+  body += ip;
+  body += "\nGET /api/bridge/device";
+  showScreen("NekoPaw Ready", body, "POST /api/bridge/display/text", "success");
+}
+
 } // namespace
 
 void setup() {
@@ -103,6 +134,7 @@ void setup() {
   paw.setDisplay(&display);
 
   if (!kHasWiFiCredentials) {
+    showMissingCredentialsScreen();
     Serial.println("WiFi credentials are not configured.");
     Serial.println("Create examples/BasicDisplay/platformio_override.ini with:");
     Serial.println("  [env:airm2m_core_esp32c3]");
@@ -113,8 +145,10 @@ void setup() {
     return;
   }
 
+  showConnectingScreen();
   connectWiFi();
   if (WiFi.status() != WL_CONNECTED) {
+    showWiFiFailureScreen();
     Serial.println("WiFi connection failed; bridge server not started.");
     return;
   }
@@ -122,6 +156,7 @@ void setup() {
   const String ip = WiFi.localIP().toString();
   Serial.print("WiFi connected, IP: ");
   Serial.println(ip);
+  showWelcomeScreen(ip);
 
   if (!paw.begin()) {
     Serial.println("NekoPaw begin failed.");

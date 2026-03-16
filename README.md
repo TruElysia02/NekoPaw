@@ -9,6 +9,8 @@ cd examples/BasicDisplay
 pio run
 ```
 
+`examples/BasicDisplay` uses a local `platformio_override.ini` for board-specific settings such as WiFi credentials and panel driver selection. On boot, the example now shows a welcome/status page on the e-ink display so you can confirm whether it is waiting for WiFi, failed to connect, or is ready with an IP address.
+
 Phase 1 endpoints:
 
 - `GET /api/bridge/device`
