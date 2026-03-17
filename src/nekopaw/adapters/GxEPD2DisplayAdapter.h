@@ -48,40 +48,41 @@ public:
     beginIfNeeded();
     refresh(fullRefresh, [&]() {
       display_.setTextColor(GxEPD_BLACK);
-      display_.setTextWrap(true);
+      display_.setTextWrap(false);
       display_.cp437(true);
 
       const bool isCompact = content.style != nullptr && strcmp(content.style, "compact") == 0;
       const bool isAlert = content.style != nullptr && strcmp(content.style, "alert") == 0;
-      const bool isSuccess = content.style != nullptr && strcmp(content.style, "success") == 0;
-      const int16_t margin = isCompact ? 4 : 8;
-      int16_t cursorY = margin + 12;
+      const int16_t margin = isCompact ? 6 : 8;
+      const uint8_t titleSize = isCompact ? 1 : 2;
+      const int16_t bodyTracking = isCompact ? 0 : 1;
+      const int16_t titleTracking = isCompact ? 0 : 1;
+      const int16_t bodyLineSpacing = isCompact ? 2 : 3;
+      const int16_t contentWidth = layout_.width - margin * 2;
+      int16_t bodyTop = margin;
+      int16_t bodyBottom = layout_.height - margin;
 
       if (isAlert) {
         display_.drawRect(0, 0, layout_.width, layout_.height, GxEPD_BLACK);
-      } else if (isSuccess) {
-        display_.drawLine(0, 0, layout_.width - 1, 0, GxEPD_BLACK);
-        display_.drawLine(0, 1, layout_.width - 1, 1, GxEPD_BLACK);
       }
 
       if (content.title != nullptr && content.title[0] != '\0') {
-        display_.setTextSize(isCompact ? 1 : 2);
-        display_.setCursor(margin, cursorY);
-        display_.println(content.title);
-        cursorY += isCompact ? 10 : 16;
-        display_.drawLine(margin, cursorY, layout_.width - margin, cursorY, GxEPD_BLACK);
-        cursorY += 8;
-      }
+        const int16_t titleY = margin - (isCompact ? 1 : 2);
+        drawTextBlock(margin, titleY, contentWidth, layout_.height - margin, content.title, titleSize, titleTracking,
+                      0);
 
-      display_.setTextSize(1);
-      display_.setCursor(margin, cursorY);
-      display_.print(content.body);
+        const int16_t separatorY = titleY + glyphHeight(titleSize) + (isCompact ? 3 : 4);
+        display_.drawLine(margin, separatorY, layout_.width - margin, separatorY, GxEPD_BLACK);
+        bodyTop = separatorY + (isCompact ? 7 : 10);
+      }
 
       if (content.footer != nullptr && content.footer[0] != '\0') {
-        display_.setTextWrap(false);
-        display_.setCursor(margin, static_cast<int16_t>(layout_.height - 8));
-        display_.print(content.footer);
+        const int16_t footerY = layout_.height - margin - glyphHeight(1);
+        drawTextBlock(margin, footerY, contentWidth, layout_.height - margin, content.footer, 1, bodyTracking, 0);
+        bodyBottom = footerY - (isCompact ? 8 : 10);
       }
+
+      drawTextBlock(margin, bodyTop, contentWidth, bodyBottom, content.body, 1, bodyTracking, bodyLineSpacing);
     });
 
     return true;
@@ -125,6 +126,63 @@ public:
   }
 
 private:
+  static constexpr int16_t kClassicFontWidth = 6;
+  static constexpr int16_t kClassicFontHeight = 8;
+
+  static int16_t glyphWidth(uint8_t textSize) { return static_cast<int16_t>(kClassicFontWidth * textSize); }
+
+  static int16_t glyphHeight(uint8_t textSize) { return static_cast<int16_t>(kClassicFontHeight * textSize); }
+
+  void drawTextBlock(int16_t startX, int16_t startY, int16_t maxWidth, int16_t maxBottom, const char* text,
+                     uint8_t textSize, int16_t tracking, int16_t lineSpacing) {
+    if (text == nullptr || text[0] == '\0' || maxWidth <= 0) {
+      return;
+    }
+
+    const int16_t charWidth = glyphWidth(textSize);
+    const int16_t charHeight = glyphHeight(textSize);
+    const int16_t lineHeight = charHeight + lineSpacing;
+    const int16_t maxX = startX + maxWidth;
+
+    int16_t cursorX = startX;
+    int16_t cursorY = startY;
+
+    display_.setTextSize(textSize);
+    display_.setTextWrap(false);
+
+    for (const char* p = text; *p != '\0'; ++p) {
+      const char ch = *p;
+      if (ch == '\r') {
+        continue;
+      }
+
+      if (ch == '\n') {
+        cursorX = startX;
+        cursorY = static_cast<int16_t>(cursorY + lineHeight);
+        if (cursorY + charHeight > maxBottom) {
+          return;
+        }
+        continue;
+      }
+
+      if (cursorX > startX && cursorX + charWidth > maxX) {
+        cursorX = startX;
+        cursorY = static_cast<int16_t>(cursorY + lineHeight);
+        if (cursorY + charHeight > maxBottom) {
+          return;
+        }
+      }
+
+      display_.setCursor(cursorX, cursorY);
+      display_.write(static_cast<uint8_t>(ch));
+      cursorX = static_cast<int16_t>(cursorX + charWidth);
+
+      if (tracking > 0 && p[1] != '\0' && p[1] != '\n' && p[1] != '\r') {
+        cursorX = static_cast<int16_t>(cursorX + tracking);
+      }
+    }
+  }
+
   void beginIfNeeded() {
     if (started_) {
       return;
