@@ -30,6 +30,11 @@ void BridgeServer::attachRoutes() {
   server_.on("/api/bridge/display/state", HTTP_GET, [this]() { dispatch(&CommandDispatcher::handleDisplayState); });
   server_.on("/api/bridge/device/description", HTTP_PATCH,
              [this]() { dispatch(&CommandDispatcher::handleDeviceDescriptionPatch); });
+  server_.on("/api/bridge/sensors", HTTP_GET, [this]() { dispatch(&CommandDispatcher::handleSensors); });
+  server_.on("/api/bridge/events/watch", HTTP_POST, [this]() { dispatch(&CommandDispatcher::handleEventsWatchCreate); });
+  server_.on("/api/bridge/events/watch", HTTP_DELETE,
+             [this]() { dispatch(&CommandDispatcher::handleEventsWatchDelete); });
+  server_.on("/api/bridge/events", HTTP_GET, [this]() { dispatch(&CommandDispatcher::handleEventsPoll); });
   server_.onNotFound([this]() { dispatch(&CommandDispatcher::handleNotFound); });
 }
 

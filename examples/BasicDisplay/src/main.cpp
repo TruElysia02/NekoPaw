@@ -3,6 +3,8 @@
 #include <GxEPD2_BW.h>
 
 #include <NekoPaw.h>
+#include <nekopaw/adapters/AnalogSensorAdapter.h>
+#include <nekopaw/adapters/ButtonInputAdapter.h>
 #include <nekopaw/adapters/GxEPD2DisplayAdapter.h>
 
 #ifndef NEKOPAW_WIFI_SSID
@@ -24,6 +26,9 @@ constexpr int kEpdCs = 10;
 constexpr int kEpdDc = 3;
 constexpr int kEpdRst = 2;
 constexpr int kEpdBusy = 5;
+constexpr int kButton1Pin = 0;
+constexpr int kButton2Pin = 1;
+constexpr int kBatteryAdcPin = 4;
 constexpr uint16_t kScreenWidth = 296;
 constexpr uint16_t kScreenHeight = 128;
 constexpr uint8_t kScreenRotation = 3;
@@ -63,6 +68,27 @@ nekopaw::GxEPD2DisplayAdapter<ExampleDisplay>::Layout makeDisplayLayout() {
   return layout;
 }
 
+nekopaw::AnalogSensorAdapter::Config makeBatteryConfig() {
+  nekopaw::AnalogSensorAdapter::Config config;
+  config.pin = kBatteryAdcPin;
+  config.id = "battery";
+  config.type = "voltage";
+  config.unit = "V";
+  config.description = "Battery voltage";
+  config.adcResolutionBits = 12;
+  config.sampleCount = 9;
+  config.sampleDelayMs = 5;
+  config.multiplier = 2.0f;
+  return config;
+}
+
+nekopaw::ButtonInputAdapter::Config makeButtonConfig(int pin, const char* id) {
+  nekopaw::ButtonInputAdapter::Config config;
+  config.pin = pin;
+  config.id = id;
+  return config;
+}
+
 nekopaw::NekoPaw::Config makePawConfig() {
   nekopaw::NekoPaw::Config config;
   config.httpPort = 80;
@@ -76,6 +102,12 @@ const nekopaw::GxEPD2DisplayAdapter<ExampleDisplay>::Pins kDisplayPins = {kEpdSc
                                                                            kEpdDc,   kEpdRst,  kEpdBusy};
 const nekopaw::GxEPD2DisplayAdapter<ExampleDisplay>::Layout kDisplayLayout = makeDisplayLayout();
 nekopaw::GxEPD2DisplayAdapter<ExampleDisplay> display(epd, kDisplayPins, kDisplayLayout);
+const nekopaw::AnalogSensorAdapter::Config kBatteryConfig = makeBatteryConfig();
+nekopaw::AnalogSensorAdapter battery(kBatteryConfig);
+const nekopaw::ButtonInputAdapter::Config kButton1Config = makeButtonConfig(kButton1Pin, "button1");
+const nekopaw::ButtonInputAdapter::Config kButton2Config = makeButtonConfig(kButton2Pin, "button2");
+nekopaw::ButtonInputAdapter button1(kButton1Config);
+nekopaw::ButtonInputAdapter button2(kButton2Config);
 const nekopaw::NekoPaw::Config kPawConfig = makePawConfig();
 nekopaw::NekoPaw paw(kPawConfig);
 
@@ -132,6 +164,9 @@ void setup() {
   Serial.println("NekoPaw BasicDisplay");
 
   paw.setDisplay(&display);
+  paw.addSensor(&battery);
+  paw.addInput(&button1);
+  paw.addInput(&button2);
 
   if (!kHasWiFiCredentials) {
     showMissingCredentialsScreen();
@@ -166,6 +201,12 @@ void setup() {
   Serial.print("Device info: http://");
   Serial.print(ip);
   Serial.println("/api/bridge/device");
+  Serial.print("Sensors: http://");
+  Serial.print(ip);
+  Serial.println("/api/bridge/sensors");
+  Serial.print("Events: http://");
+  Serial.print(ip);
+  Serial.println("/api/bridge/events");
 }
 
 void loop() {

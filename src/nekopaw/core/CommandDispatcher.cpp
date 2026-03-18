@@ -10,9 +10,59 @@
 
 #include "NekoPaw.h"
 #include "nekopaw/core/Config.h"
+#include "nekopaw/core/EventManager.h"
 #include "nekopaw/core/Protocol.h"
 
 namespace nekopaw {
+
+namespace {
+
+bool isEmptyString(const String& value) { return value.length() == 0; }
+
+uint32_t sensorReadingTsSeconds(const SensorProvider::Reading& reading, uint32_t fallbackTs) {
+  if (reading.timestamp == 0) {
+    return fallbackTs;
+  }
+  return reading.timestamp / 1000UL;
+}
+
+void fillSensorReadingJson(ArduinoJson::JsonObject data, const SensorProvider::Info& info,
+                           const SensorProvider::Reading& reading, uint32_t fallbackTs) {
+  data["id"] = info.id != nullptr ? info.id : "";
+  data["type"] = info.type != nullptr ? info.type : "";
+  data["unit"] = info.unit != nullptr ? info.unit : "";
+  if (info.description != nullptr && info.description[0] != '\0') {
+    data["description"] = info.description;
+  } else {
+    data["description"] = nullptr;
+  }
+
+  if (reading.valid) {
+    data["value"] = reading.value;
+    data["status"] = "ok";
+  } else {
+    data["value"] = nullptr;
+    data["status"] = "unavailable";
+  }
+  data["ts"] = sensorReadingTsSeconds(reading, fallbackTs);
+}
+
+bool parseWatchIdArg(WebServer& server, String& watchId, String& errorMessage) {
+  if (!server.hasArg("id")) {
+    errorMessage = "id is required";
+    return false;
+  }
+
+  watchId = server.arg("id");
+  watchId.trim();
+  if (watchId.length() == 0) {
+    errorMessage = "id is required";
+    return false;
+  }
+  return true;
+}
+
+} // namespace
 
 CommandDispatcher::CommandDispatcher(NekoPaw& paw) : paw_(paw) {}
 
@@ -288,6 +338,182 @@ int CommandDispatcher::handleDeviceDescriptionPatch(WebServer& server) {
   return core::sendOk(server, paw_.deviceIdBuffer_, paw_.nowSeconds(), [&](ArduinoJson::JsonObject data) {
     data["description"] = paw_.descriptionBuffer_;
     data["descriptionSource"] = paw_.descriptionSourceLabel();
+  });
+}
+
+int CommandDispatcher::handleSensors(WebServer& server) {
+  const uint32_t nowSeconds = paw_.nowSeconds();
+
+  if (server.hasArg("id")) {
+    String sensorId = server.arg("id");
+    sensorId.trim();
+    if (sensorId.length() == 0) {
+      return core::sendError(server, 400, paw_.deviceIdBuffer_, nowSeconds, "INVALID_PARAMS", "id is required");
+    }
+
+    for (size_t i = 0; i < paw_.sensorCount_; ++i) {
+      const SensorProvider::Info info = paw_.sensors_[i]->info();
+      if (info.id == nullptr || sensorId != info.id) {
+        continue;
+      }
+
+      const SensorProvider::Reading reading = paw_.sensors_[i]->read();
+      return core::sendOk(server, paw_.deviceIdBuffer_, nowSeconds, [&](ArduinoJson::JsonObject data) {
+        fillSensorReadingJson(data, info, reading, nowSeconds);
+      });
+    }
+
+    return core::sendError(server, 404, paw_.deviceIdBuffer_, nowSeconds, "SENSOR_NOT_FOUND",
+                           String("sensor '") + sensorId + "' not registered");
+  }
+
+  return core::sendOk(server, paw_.deviceIdBuffer_, nowSeconds, [&](ArduinoJson::JsonObject data) {
+    ArduinoJson::JsonArray sensors = data["sensors"].to<ArduinoJson::JsonArray>();
+    for (size_t i = 0; i < paw_.sensorCount_; ++i) {
+      const SensorProvider::Info info = paw_.sensors_[i]->info();
+      const SensorProvider::Reading reading = paw_.sensors_[i]->read();
+      fillSensorReadingJson(sensors.add<ArduinoJson::JsonObject>(), info, reading, nowSeconds);
+    }
+  });
+}
+
+int CommandDispatcher::handleEventsWatchCreate(WebServer& server) {
+  if (paw_.eventManager_ == nullptr) {
+    return core::sendError(server, 500, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INTERNAL_ERROR",
+                           "event manager is not available");
+  }
+
+  ArduinoJson::JsonDocument doc;
+  String errorMessage;
+  if (!core::parseJsonBody(server, doc, errorMessage)) {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
+  }
+
+  const ArduinoJson::JsonVariantConst root = doc.as<ArduinoJson::JsonVariantConst>();
+  const ArduinoJson::JsonArrayConst watches = root["watches"].as<ArduinoJson::JsonArrayConst>();
+  if (watches.isNull() || watches.size() == 0) {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                           "watches must be a non-empty array");
+  }
+
+  const char* errorCode = "INVALID_PARAMS";
+  for (ArduinoJson::JsonVariantConst item : watches) {
+    const ArduinoJson::JsonObjectConst watch = item.as<ArduinoJson::JsonObjectConst>();
+    if (watch.isNull()) {
+      return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                             "each watch must be an object");
+    }
+
+    EventManager::WatchRegistration registration;
+    const String watchId = watch["id"] | "";
+    const String sensorId = watch["sensor"] | "";
+    const String inputId = watch["input"] | "";
+    const String message = watch["message"] | "";
+    if (isEmptyString(watchId)) {
+      return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                             "watch id is required");
+    }
+    if (sensorId.length() > 0 && inputId.length() > 0) {
+      return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                             "watch must declare either sensor or input, not both");
+    }
+    if (sensorId.length() == 0 && inputId.length() == 0) {
+      return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                             "watch must declare either sensor or input");
+    }
+
+    registration.id = watchId.c_str();
+    registration.message = message.length() > 0 ? message.c_str() : nullptr;
+    if (!core::parseOptionalUint32(watch["cooldown"], registration.cooldownSeconds, errorMessage)) {
+      return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
+    }
+
+    if (sensorId.length() > 0) {
+      registration.kind = EventManager::WatchRegistration::Kind::Sensor;
+      registration.sourceId = sensorId.c_str();
+
+      const ArduinoJson::JsonObjectConst condition = watch["condition"].as<ArduinoJson::JsonObjectConst>();
+      if (condition.isNull()) {
+        return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                               "condition is required for sensor watch");
+      }
+
+      const String op = condition["op"] | "";
+      if (!EventManager::parseConditionOp(op, registration.conditionOp)) {
+        return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                               "condition.op must be one of gt, lt, gte, lte, eq, change");
+      }
+
+      if (!core::parseOptionalFloat(condition["value"], registration.conditionValue, registration.hasConditionValue,
+                                    errorMessage)) {
+        return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
+      }
+
+      if (registration.conditionOp != EventManager::WatchRegistration::ConditionOp::Change &&
+          !registration.hasConditionValue) {
+        return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                               "condition.value is required for this operator");
+      }
+    } else {
+      registration.kind = EventManager::WatchRegistration::Kind::Input;
+      registration.sourceId = inputId.c_str();
+
+      const String trigger = watch["trigger"] | "";
+      if (!EventManager::parseInputTrigger(trigger, registration.inputTrigger)) {
+        return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                               "trigger must be one of click, double_click, long_press, release");
+      }
+    }
+
+    if (!paw_.eventManager_->upsertWatch(registration, paw_, errorMessage, errorCode)) {
+      const int statusCode = strcmp(errorCode, "WATCH_LIMIT") == 0 ? 409 : 400;
+      return core::sendError(server, statusCode, paw_.deviceIdBuffer_, paw_.nowSeconds(), errorCode, errorMessage);
+    }
+  }
+
+  return core::sendOk(server, paw_.deviceIdBuffer_, paw_.nowSeconds(), [&](ArduinoJson::JsonObject data) {
+    data["watchCount"] = paw_.eventManager_->watchCount();
+    data["maxWatches"] = paw_.eventManager_->maxWatchCount();
+    ArduinoJson::JsonArray watchesData = data["watches"].to<ArduinoJson::JsonArray>();
+    paw_.eventManager_->appendWatches(watchesData);
+  });
+}
+
+int CommandDispatcher::handleEventsWatchDelete(WebServer& server) {
+  if (paw_.eventManager_ == nullptr) {
+    return core::sendError(server, 500, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INTERNAL_ERROR",
+                           "event manager is not available");
+  }
+
+  String watchId;
+  String errorMessage;
+  if (!parseWatchIdArg(server, watchId, errorMessage)) {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
+  }
+
+  const char* errorCode = "INVALID_PARAMS";
+  if (!paw_.eventManager_->removeWatch(watchId.c_str(), errorMessage, errorCode)) {
+    const int statusCode = strcmp(errorCode, "WATCH_NOT_FOUND") == 0 ? 404 : 400;
+    return core::sendError(server, statusCode, paw_.deviceIdBuffer_, paw_.nowSeconds(), errorCode, errorMessage);
+  }
+
+  return core::sendOk(server, paw_.deviceIdBuffer_, paw_.nowSeconds(), [&](ArduinoJson::JsonObject data) {
+    data["id"] = watchId;
+    data["watchCount"] = paw_.eventManager_->watchCount();
+  });
+}
+
+int CommandDispatcher::handleEventsPoll(WebServer& server) {
+  if (paw_.eventManager_ == nullptr) {
+    return core::sendError(server, 500, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INTERNAL_ERROR",
+                           "event manager is not available");
+  }
+
+  return core::sendOk(server, paw_.deviceIdBuffer_, paw_.nowSeconds(), [&](ArduinoJson::JsonObject data) {
+    ArduinoJson::JsonArray events = data["events"].to<ArduinoJson::JsonArray>();
+    size_t remaining = 0;
+    paw_.eventManager_->drainEvents(events, remaining);
+    data["remaining"] = remaining;
   });
 }
 

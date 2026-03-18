@@ -11,13 +11,19 @@ pio run
 
 `examples/BasicDisplay` uses a local `platformio_override.ini` for board-specific settings such as WiFi credentials and panel driver selection. On boot, the example now shows a welcome/status page on the e-ink display so you can confirm whether it is waiting for WiFi, failed to connect, or is ready with an IP address.
 
-Phase 1 endpoints:
+Current device endpoints:
 
 - `GET /api/bridge/device`
 - `POST /api/bridge/display/text`
 - `POST /api/bridge/display/bitmap`
 - `GET /api/bridge/display/state`
 - `PATCH /api/bridge/device/description`
+- `GET /api/bridge/sensors`
+- `POST /api/bridge/events/watch`
+- `DELETE /api/bridge/events/watch`
+- `GET /api/bridge/events`
+
+`examples/BasicDisplay` now also registers one battery voltage sensor (`battery`) and two button inputs (`button1`, `button2`) so the P2 sensors/events APIs can be exercised on real hardware.
 
 CLI examples:
 

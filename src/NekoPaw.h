@@ -12,11 +12,14 @@ namespace nekopaw {
 
 class BridgeServer;
 class CommandDispatcher;
+class EventManager;
 
 class NekoPaw {
 public:
   struct Config {
     uint16_t httpPort = 80;
+    size_t maxEventQueue = 16;
+    size_t maxWatches = 8;
     const char* deviceId = nullptr;
     const char* description = nullptr;
   };
@@ -35,6 +38,7 @@ public:
 private:
   friend class BridgeServer;
   friend class CommandDispatcher;
+  friend class EventManager;
 
   static constexpr size_t kMaxSensors = 8;
   static constexpr size_t kMaxInputs = 4;
@@ -81,6 +85,7 @@ private:
   DisplayState displayState_;
   BridgeServer* bridge_ = nullptr;
   CommandDispatcher* dispatcher_ = nullptr;
+  EventManager* eventManager_ = nullptr;
 };
 
 } // namespace nekopaw

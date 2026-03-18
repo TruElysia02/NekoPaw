@@ -165,6 +165,24 @@ inline bool parseOptionalUint32Arg(const String& value, uint32_t& outValue, Stri
   return true;
 }
 
+inline bool parseOptionalFloat(ArduinoJson::JsonVariantConst value, float& outValue, bool& hasValue,
+                               String& errorMessage) {
+  if (value.isNull()) {
+    outValue = 0.0f;
+    hasValue = false;
+    return true;
+  }
+
+  if (value.is<float>() || value.is<double>() || value.is<int32_t>() || value.is<uint32_t>()) {
+    outValue = value.as<float>();
+    hasValue = true;
+    return true;
+  }
+
+  errorMessage = "value must be a number";
+  return false;
+}
+
 inline size_t bitmapByteLength(uint16_t width, uint16_t height) {
   return static_cast<size_t>((width + 7U) / 8U) * static_cast<size_t>(height);
 }

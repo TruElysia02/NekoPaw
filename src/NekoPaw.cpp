@@ -8,6 +8,7 @@
 #include "nekopaw/core/BridgeServer.h"
 #include "nekopaw/core/CommandDispatcher.h"
 #include "nekopaw/core/Config.h"
+#include "nekopaw/core/EventManager.h"
 #include "nekopaw/core/Protocol.h"
 
 namespace nekopaw {
@@ -111,6 +112,13 @@ bool NekoPaw::begin() {
   ensureDeviceId();
   loadDescription();
 
+  if (eventManager_ == nullptr) {
+    eventManager_ = new (std::nothrow) EventManager(config_.maxEventQueue, config_.maxWatches);
+    if (eventManager_ == nullptr || !eventManager_->begin()) {
+      return false;
+    }
+  }
+
   if (dispatcher_ == nullptr) {
     dispatcher_ = new (std::nothrow) CommandDispatcher(*this);
     if (dispatcher_ == nullptr) {
@@ -151,6 +159,10 @@ void NekoPaw::loop() {
     if (outputs_[i] != nullptr) {
       outputs_[i]->tick();
     }
+  }
+
+  if (eventManager_ != nullptr) {
+    eventManager_->tick(*this);
   }
 }
 

@@ -19,6 +19,10 @@ public:
   int handleDisplayBitmap(WebServer& server);
   int handleDisplayState(WebServer& server);
   int handleDeviceDescriptionPatch(WebServer& server);
+  int handleSensors(WebServer& server);
+  int handleEventsWatchCreate(WebServer& server);
+  int handleEventsWatchDelete(WebServer& server);
+  int handleEventsPoll(WebServer& server);
   int handleNotFound(WebServer& server);
 
 private:
