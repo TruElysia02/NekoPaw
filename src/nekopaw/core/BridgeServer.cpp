@@ -28,6 +28,11 @@ void BridgeServer::attachRoutes() {
   server_.on("/api/bridge/display/bitmap", HTTP_POST, [this]() { dispatch(&CommandDispatcher::handleDisplayBitmap); },
              [this]() { dispatcher_.handleDisplayBitmapRaw(server_); });
   server_.on("/api/bridge/display/state", HTTP_GET, [this]() { dispatch(&CommandDispatcher::handleDisplayState); });
+  server_.on("/api/bridge/display/confirm", HTTP_POST,
+             [this]() { dispatch(&CommandDispatcher::handleDisplayConfirmCreate); });
+  server_.on("/api/bridge/display/confirm", HTTP_GET, [this]() { dispatch(&CommandDispatcher::handleDisplayConfirmGet); });
+  server_.on("/api/bridge/display/confirm", HTTP_DELETE,
+             [this]() { dispatch(&CommandDispatcher::handleDisplayConfirmDelete); });
   server_.on("/api/bridge/device/description", HTTP_PATCH,
              [this]() { dispatch(&CommandDispatcher::handleDeviceDescriptionPatch); });
   server_.on("/api/bridge/sensors", HTTP_GET, [this]() { dispatch(&CommandDispatcher::handleSensors); });
@@ -35,6 +40,7 @@ void BridgeServer::attachRoutes() {
   server_.on("/api/bridge/events/watch", HTTP_DELETE,
              [this]() { dispatch(&CommandDispatcher::handleEventsWatchDelete); });
   server_.on("/api/bridge/events", HTTP_GET, [this]() { dispatch(&CommandDispatcher::handleEventsPoll); });
+  server_.on("/api/bridge/outputs", HTTP_POST, [this]() { dispatch(&CommandDispatcher::handleOutputs); });
   server_.onNotFound([this]() { dispatch(&CommandDispatcher::handleNotFound); });
 }
 

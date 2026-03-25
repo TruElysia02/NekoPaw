@@ -446,6 +446,26 @@ void EventManager::enqueueInputEvent(const WatchRecord& watch, uint32_t nowSecon
   ++eventCount_;
 }
 
+void EventManager::handleInputEvent(size_t inputIndex, InputProvider::Event event, uint32_t nowSeconds) {
+  if (!started_ || watches_ == nullptr || watchCount_ == 0 || event == InputProvider::Event::None) {
+    return;
+  }
+
+  for (size_t watchIndex = 0; watchIndex < maxWatches_; ++watchIndex) {
+    WatchRecord& watch = watches_[watchIndex];
+    if (!watch.active || watch.kind != WatchRegistration::Kind::Input || watch.sourceIndex != inputIndex ||
+        watch.inputTrigger != event) {
+      continue;
+    }
+    if (!cooldownElapsed(nowSeconds, watch.lastTriggeredAtSeconds, watch.cooldownSeconds)) {
+      continue;
+    }
+
+    enqueueInputEvent(watch, nowSeconds, event);
+    watch.lastTriggeredAtSeconds = nowSeconds;
+  }
+}
+
 void EventManager::tick(NekoPaw& paw) {
   if (!started_ || watches_ == nullptr || watchCount_ == 0) {
     return;
@@ -518,33 +538,6 @@ void EventManager::tick(NekoPaw& paw) {
 
     enqueueSensorEvent(watch, nowSeconds, value, snapshot.info.unit, "ok");
     watch.lastTriggeredAtSeconds = nowSeconds;
-  }
-
-  for (size_t inputIndex = 0; inputIndex < paw.inputCount_; ++inputIndex) {
-    if (paw.inputs_[inputIndex] == nullptr) {
-      continue;
-    }
-
-    while (true) {
-      const InputProvider::Event event = paw.inputs_[inputIndex]->poll();
-      if (event == InputProvider::Event::None) {
-        break;
-      }
-
-      for (size_t watchIndex = 0; watchIndex < maxWatches_; ++watchIndex) {
-        WatchRecord& watch = watches_[watchIndex];
-        if (!watch.active || watch.kind != WatchRegistration::Kind::Input || watch.sourceIndex != inputIndex ||
-            watch.inputTrigger != event) {
-          continue;
-        }
-        if (!cooldownElapsed(nowSeconds, watch.lastTriggeredAtSeconds, watch.cooldownSeconds)) {
-          continue;
-        }
-
-        enqueueInputEvent(watch, nowSeconds, event);
-        watch.lastTriggeredAtSeconds = nowSeconds;
-      }
-    }
   }
 }
 

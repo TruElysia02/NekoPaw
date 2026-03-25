@@ -3,6 +3,8 @@
 #include <ESP.h>
 #include <Preferences.h>
 
+#include <string.h>
+
 #include <new>
 
 #include "nekopaw/core/BridgeServer.h"
@@ -108,6 +110,99 @@ void NekoPaw::markDisplayState(DisplaySource source, uint32_t ttlSeconds) {
   displayState_.ttlSeconds = ttlSeconds;
 }
 
+NekoPaw::ConfirmState NekoPaw::confirmState() const {
+  return confirm_.occupied ? confirm_.state : ConfirmState::Idle;
+}
+
+const char* NekoPaw::confirmStateLabel() const {
+  switch (confirmState()) {
+    case ConfirmState::Pending:
+      return "pending";
+    case ConfirmState::Confirmed:
+      return "confirmed";
+    case ConfirmState::Cancelled:
+      return "cancelled";
+    case ConfirmState::Timeout:
+      return "timeout";
+    case ConfirmState::Idle:
+    default:
+      return "idle";
+  }
+}
+
+bool NekoPaw::hasPendingConfirm() const {
+  return confirm_.occupied && confirm_.state == ConfirmState::Pending;
+}
+
+bool NekoPaw::matchesConfirmRequestId(const char* requestId) const {
+  return confirm_.occupied && requestId != nullptr && requestId[0] != '\0' && strcmp(confirm_.requestId, requestId) == 0;
+}
+
+bool NekoPaw::startConfirm(const DisplayProvider::ConfirmContent& content, uint32_t timeoutSeconds, bool fullRefresh) {
+  if (display_ == nullptr || hasPendingConfirm()) {
+    return false;
+  }
+
+  ConfirmSession nextConfirm;
+  nextConfirm.occupied = true;
+  nextConfirm.state = ConfirmState::Pending;
+  nextConfirm.startedAtSeconds = nowSeconds();
+  nextConfirm.startedAtMillis = millis();
+  nextConfirm.timeoutSeconds = timeoutSeconds;
+
+  snprintf(nextConfirm.requestId, sizeof(nextConfirm.requestId), "cfm_%06lu",
+           static_cast<unsigned long>(nextConfirmSequence_));
+  ++nextConfirmSequence_;
+  if (nextConfirmSequence_ == 0) {
+    nextConfirmSequence_ = 1;
+  }
+
+  if (!display_->showConfirm(content, fullRefresh)) {
+    return false;
+  }
+
+  confirm_ = nextConfirm;
+  return true;
+}
+
+bool NekoPaw::resolveConfirm(ConfirmState state) {
+  if (!hasPendingConfirm() || state == ConfirmState::Idle || state == ConfirmState::Pending) {
+    return false;
+  }
+
+  confirm_.state = state;
+  confirm_.respondedAtSeconds = nowSeconds();
+  confirm_.responseTimeMs = millis() - confirm_.startedAtMillis;
+  return true;
+}
+
+bool NekoPaw::cancelConfirm() { return resolveConfirm(ConfirmState::Cancelled); }
+
+void NekoPaw::handleInputEvent(const InputProvider::Info& info, InputProvider::Event event) {
+  if (!hasPendingConfirm() || event != InputProvider::Event::Click || info.id == nullptr) {
+    return;
+  }
+
+  if (strcmp(info.id, "button1") == 0) {
+    (void)resolveConfirm(ConfirmState::Confirmed);
+  } else if (strcmp(info.id, "button2") == 0) {
+    (void)resolveConfirm(ConfirmState::Cancelled);
+  }
+}
+
+void NekoPaw::tickConfirm() {
+  if (!hasPendingConfirm() || confirm_.timeoutSeconds == 0) {
+    return;
+  }
+
+  const uint32_t elapsedMs = millis() - confirm_.startedAtMillis;
+  if (elapsedMs < static_cast<uint32_t>(confirm_.timeoutSeconds * 1000UL)) {
+    return;
+  }
+
+  (void)resolveConfirm(ConfirmState::Timeout);
+}
+
 bool NekoPaw::begin() {
   ensureDeviceId();
   loadDescription();
@@ -130,6 +225,12 @@ bool NekoPaw::begin() {
     bridge_ = new (std::nothrow) BridgeServer(config_.httpPort, *dispatcher_);
     if (bridge_ == nullptr) {
       return false;
+    }
+  }
+
+  for (size_t i = 0; i < outputCount_; ++i) {
+    if (outputs_[i] != nullptr) {
+      outputs_[i]->tick();
     }
   }
 
@@ -160,6 +261,28 @@ void NekoPaw::loop() {
       outputs_[i]->tick();
     }
   }
+
+  const uint32_t now = nowSeconds();
+  for (size_t i = 0; i < inputCount_; ++i) {
+    if (inputs_[i] == nullptr) {
+      continue;
+    }
+
+    const InputProvider::Info info = inputs_[i]->info();
+    while (true) {
+      const InputProvider::Event event = inputs_[i]->poll();
+      if (event == InputProvider::Event::None) {
+        break;
+      }
+
+      handleInputEvent(info, event);
+      if (eventManager_ != nullptr) {
+        eventManager_->handleInputEvent(i, event, now);
+      }
+    }
+  }
+
+  tickConfirm();
 
   if (eventManager_ != nullptr) {
     eventManager_->tick(*this);

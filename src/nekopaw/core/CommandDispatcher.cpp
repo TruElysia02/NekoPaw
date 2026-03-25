@@ -18,6 +18,7 @@ namespace nekopaw {
 namespace {
 
 bool isEmptyString(const String& value) { return value.length() == 0; }
+constexpr uint32_t kDefaultConfirmTimeoutSeconds = 30;
 
 uint32_t sensorReadingTsSeconds(const SensorProvider::Reading& reading, uint32_t fallbackTs) {
   if (reading.timestamp == 0) {
@@ -47,16 +48,21 @@ void fillSensorReadingJson(ArduinoJson::JsonObject data, const SensorProvider::I
   data["ts"] = sensorReadingTsSeconds(reading, fallbackTs);
 }
 
-bool parseWatchIdArg(WebServer& server, String& watchId, String& errorMessage) {
-  if (!server.hasArg("id")) {
-    errorMessage = "id is required";
+bool parseRequiredQueryArg(WebServer& server, const char* name, String& value, String& errorMessage) {
+  if (name == nullptr || name[0] == '\0') {
+    errorMessage = "query argument name is required";
     return false;
   }
 
-  watchId = server.arg("id");
-  watchId.trim();
-  if (watchId.length() == 0) {
-    errorMessage = "id is required";
+  if (!server.hasArg(name)) {
+    errorMessage = String(name) + " is required";
+    return false;
+  }
+
+  value = server.arg(name);
+  value.trim();
+  if (value.length() == 0) {
+    errorMessage = String(name) + " is required";
     return false;
   }
   return true;
@@ -130,6 +136,10 @@ int CommandDispatcher::handleDevice(WebServer& server) {
 int CommandDispatcher::handleDisplayText(WebServer& server) {
   if (paw_.display_ == nullptr) {
     return sendDisplayUnavailable(server);
+  }
+  if (paw_.hasPendingConfirm()) {
+    return core::sendError(server, 409, paw_.deviceIdBuffer_, paw_.nowSeconds(), "DISPLAY_BUSY",
+                           "confirm is in progress");
   }
 
   ArduinoJson::JsonDocument doc;
@@ -236,6 +246,10 @@ int CommandDispatcher::handleDisplayBitmap(WebServer& server) {
   if (paw_.display_ == nullptr) {
     return sendDisplayUnavailable(server);
   }
+  if (paw_.hasPendingConfirm()) {
+    return core::sendError(server, 409, paw_.deviceIdBuffer_, paw_.nowSeconds(), "DISPLAY_BUSY",
+                           "confirm is in progress");
+  }
 
   String errorMessage;
   bool fullRefresh = false;
@@ -296,13 +310,129 @@ int CommandDispatcher::handleDisplayState(WebServer& server) {
 
     if (paw_.displayState_.ttlSeconds == 0 || paw_.displayState_.updatedAtSeconds == 0) {
       data["ttlRemaining"] = nullptr;
-      return;
+    } else {
+      const uint32_t now = paw_.nowSeconds();
+      const uint32_t elapsed =
+          now >= paw_.displayState_.updatedAtSeconds ? now - paw_.displayState_.updatedAtSeconds : 0;
+      data["ttlRemaining"] = elapsed >= paw_.displayState_.ttlSeconds ? 0 : paw_.displayState_.ttlSeconds - elapsed;
     }
 
-    const uint32_t now = paw_.nowSeconds();
-    const uint32_t elapsed = now >= paw_.displayState_.updatedAtSeconds ? now - paw_.displayState_.updatedAtSeconds : 0;
-    data["ttlRemaining"] = elapsed >= paw_.displayState_.ttlSeconds ? 0 : paw_.displayState_.ttlSeconds - elapsed;
+    data["hasConfirmPending"] = paw_.hasPendingConfirm();
+    if (paw_.hasPendingConfirm()) {
+      data["confirmRequestId"] = paw_.confirm_.requestId;
+    } else {
+      data["confirmRequestId"] = nullptr;
+    }
   });
+}
+
+int CommandDispatcher::handleDisplayConfirmCreate(WebServer& server) {
+  if (paw_.display_ == nullptr) {
+    return sendDisplayUnavailable(server);
+  }
+  if (paw_.hasPendingConfirm()) {
+    return core::sendError(server, 409, paw_.deviceIdBuffer_, paw_.nowSeconds(), "CONFIRM_ACTIVE",
+                           "a confirm request is already pending");
+  }
+
+  ArduinoJson::JsonDocument doc;
+  String errorMessage;
+  if (!core::parseJsonBody(server, doc, errorMessage)) {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
+  }
+
+  const ArduinoJson::JsonVariantConst root = doc.as<ArduinoJson::JsonVariantConst>();
+  const String body = root["body"] | "";
+  if (body.length() == 0) {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                           "body is required");
+  }
+
+  uint32_t timeoutSeconds = kDefaultConfirmTimeoutSeconds;
+  if (!root["timeout"].isNull()) {
+    if (!core::parseOptionalUint32(root["timeout"], timeoutSeconds, errorMessage)) {
+      return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
+    }
+    if (timeoutSeconds == 0) {
+      return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                             "timeout must be >= 1");
+    }
+  }
+
+  const String title = root["title"] | "";
+  const String confirmLabel = root["confirmLabel"] | "Confirm (BTN1)";
+  const String cancelLabel = root["cancelLabel"] | "Cancel (BTN2)";
+  const String style = root["style"] | "default";
+
+  DisplayProvider::ConfirmContent content;
+  content.title = title.length() > 0 ? title.c_str() : nullptr;
+  content.body = body.c_str();
+  content.confirmLabel = confirmLabel.c_str();
+  content.cancelLabel = cancelLabel.c_str();
+  content.style = style.c_str();
+
+  if (!paw_.startConfirm(content, timeoutSeconds, false)) {
+    return core::sendError(server, 500, paw_.deviceIdBuffer_, paw_.nowSeconds(), "DISPLAY_UNAVAILABLE",
+                           "display rejected confirm content");
+  }
+
+  return core::sendOk(server, paw_.deviceIdBuffer_, paw_.confirm_.startedAtSeconds,
+                      [&](ArduinoJson::JsonObject data) {
+                        data["requestId"] = paw_.confirm_.requestId;
+                        data["status"] = paw_.confirmStateLabel();
+                      });
+}
+
+int CommandDispatcher::handleDisplayConfirmGet(WebServer& server) {
+  String requestId;
+  String errorMessage;
+  if (!parseRequiredQueryArg(server, "id", requestId, errorMessage)) {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
+  }
+
+  if (!paw_.matchesConfirmRequestId(requestId.c_str())) {
+    return core::sendError(server, 404, paw_.deviceIdBuffer_, paw_.nowSeconds(), "CONFIRM_NOT_FOUND",
+                           String("confirm '") + requestId + "' not found");
+  }
+
+  const uint32_t responseTs =
+      paw_.confirm_.respondedAtSeconds > 0 ? paw_.confirm_.respondedAtSeconds : paw_.confirm_.startedAtSeconds;
+  return core::sendOk(server, paw_.deviceIdBuffer_, responseTs, [&](ArduinoJson::JsonObject data) {
+    data["requestId"] = paw_.confirm_.requestId;
+    data["status"] = paw_.confirmStateLabel();
+    if (paw_.confirm_.state == NekoPaw::ConfirmState::Pending) {
+      data["responseTime"] = nullptr;
+      data["respondedAt"] = nullptr;
+    } else {
+      data["responseTime"] = paw_.confirm_.responseTimeMs;
+      data["respondedAt"] = paw_.confirm_.respondedAtSeconds;
+    }
+  });
+}
+
+int CommandDispatcher::handleDisplayConfirmDelete(WebServer& server) {
+  String requestId;
+  String errorMessage;
+  if (!parseRequiredQueryArg(server, "id", requestId, errorMessage)) {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
+  }
+
+  if (!paw_.matchesConfirmRequestId(requestId.c_str())) {
+    return core::sendError(server, 404, paw_.deviceIdBuffer_, paw_.nowSeconds(), "CONFIRM_NOT_FOUND",
+                           String("confirm '") + requestId + "' not found");
+  }
+  if (!paw_.cancelConfirm()) {
+    return core::sendError(server, 409, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                           "confirm is not pending");
+  }
+
+  return core::sendOk(server, paw_.deviceIdBuffer_, paw_.confirm_.respondedAtSeconds,
+                      [&](ArduinoJson::JsonObject data) {
+                        data["requestId"] = paw_.confirm_.requestId;
+                        data["status"] = paw_.confirmStateLabel();
+                        data["responseTime"] = paw_.confirm_.responseTimeMs;
+                        data["respondedAt"] = paw_.confirm_.respondedAtSeconds;
+                      });
 }
 
 int CommandDispatcher::handleDeviceDescriptionPatch(WebServer& server) {
@@ -487,7 +617,7 @@ int CommandDispatcher::handleEventsWatchDelete(WebServer& server) {
 
   String watchId;
   String errorMessage;
-  if (!parseWatchIdArg(server, watchId, errorMessage)) {
+  if (!parseRequiredQueryArg(server, "id", watchId, errorMessage)) {
     return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
   }
 
@@ -514,6 +644,57 @@ int CommandDispatcher::handleEventsPoll(WebServer& server) {
     size_t remaining = 0;
     paw_.eventManager_->drainEvents(events, remaining);
     data["remaining"] = remaining;
+  });
+}
+
+int CommandDispatcher::handleOutputs(WebServer& server) {
+  String outputId;
+  String errorMessage;
+  if (!parseRequiredQueryArg(server, "id", outputId, errorMessage)) {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
+  }
+
+  OutputProvider* output = nullptr;
+  OutputProvider::Info info;
+  for (size_t i = 0; i < paw_.outputCount_; ++i) {
+    if (paw_.outputs_[i] == nullptr) {
+      continue;
+    }
+
+    const OutputProvider::Info candidate = paw_.outputs_[i]->info();
+    if (candidate.id == nullptr || outputId != candidate.id) {
+      continue;
+    }
+
+    output = paw_.outputs_[i];
+    info = candidate;
+    break;
+  }
+
+  if (output == nullptr) {
+    return core::sendError(server, 404, paw_.deviceIdBuffer_, paw_.nowSeconds(), "OUTPUT_NOT_FOUND",
+                           String("output '") + outputId + "' not registered");
+  }
+
+  ArduinoJson::JsonDocument doc;
+  if (!core::parseJsonBody(server, doc, errorMessage)) {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
+  }
+
+  const ArduinoJson::JsonObjectConst params = doc.as<ArduinoJson::JsonObjectConst>();
+  if (params.isNull()) {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                           "JSON body must be an object");
+  }
+
+  if (!output->execute(params)) {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                           "output rejected command");
+  }
+
+  return core::sendOk(server, paw_.deviceIdBuffer_, paw_.nowSeconds(), [&](ArduinoJson::JsonObject data) {
+    data["id"] = info.id != nullptr ? info.id : "";
+    data["type"] = info.type != nullptr ? info.type : "";
   });
 }
 

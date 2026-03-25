@@ -44,6 +44,7 @@ public:
 
   bool begin();
   void tick(NekoPaw& paw);
+  void handleInputEvent(size_t inputIndex, InputProvider::Event event, uint32_t nowSeconds);
 
   bool upsertWatch(const WatchRegistration& registration, NekoPaw& paw, String& errorMessage, const char*& errorCode);
   bool removeWatch(const char* id, String& errorMessage, const char*& errorCode);

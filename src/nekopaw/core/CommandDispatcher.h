@@ -18,11 +18,15 @@ public:
   void handleDisplayBitmapRaw(WebServer& server);
   int handleDisplayBitmap(WebServer& server);
   int handleDisplayState(WebServer& server);
+  int handleDisplayConfirmCreate(WebServer& server);
+  int handleDisplayConfirmGet(WebServer& server);
+  int handleDisplayConfirmDelete(WebServer& server);
   int handleDeviceDescriptionPatch(WebServer& server);
   int handleSensors(WebServer& server);
   int handleEventsWatchCreate(WebServer& server);
   int handleEventsWatchDelete(WebServer& server);
   int handleEventsPoll(WebServer& server);
+  int handleOutputs(WebServer& server);
   int handleNotFound(WebServer& server);
 
 private:

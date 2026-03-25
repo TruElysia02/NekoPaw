@@ -6,6 +6,8 @@
 #include <nekopaw/adapters/AnalogSensorAdapter.h>
 #include <nekopaw/adapters/ButtonInputAdapter.h>
 #include <nekopaw/adapters/GxEPD2DisplayAdapter.h>
+#include <nekopaw/adapters/RgbLedAdapter.h>
+#include <nekopaw/adapters/SimpleBuzzerAdapter.h>
 
 #ifndef NEKOPAW_WIFI_SSID
 #define NEKOPAW_WIFI_SSID ""
@@ -29,6 +31,10 @@ constexpr int kEpdBusy = 5;
 constexpr int kButton1Pin = 0;
 constexpr int kButton2Pin = 1;
 constexpr int kBatteryAdcPin = 4;
+constexpr int kLedRedPin = 8;
+constexpr int kLedGreenPin = 9;
+constexpr int kLedBluePin = 13;
+constexpr int kBuzzerPin = 12;
 constexpr uint16_t kScreenWidth = 296;
 constexpr uint16_t kScreenHeight = 128;
 constexpr uint8_t kScreenRotation = 3;
@@ -89,6 +95,29 @@ nekopaw::ButtonInputAdapter::Config makeButtonConfig(int pin, const char* id) {
   return config;
 }
 
+nekopaw::RgbLedAdapter::Config makeLedConfig() {
+  nekopaw::RgbLedAdapter::Config config;
+  config.redPin = kLedRedPin;
+  config.greenPin = kLedGreenPin;
+  config.bluePin = kLedBluePin;
+  config.id = "led_rgb";
+  config.type = "led";
+  config.activeLow = true;
+  return config;
+}
+
+nekopaw::SimpleBuzzerAdapter::Config makeBuzzerConfig() {
+  nekopaw::SimpleBuzzerAdapter::Config config;
+  config.pin = kBuzzerPin;
+  config.id = "buzzer";
+  config.type = "buzzer";
+  config.defaultFrequency = 1000;
+  config.defaultDurationMs = 180;
+  config.defaultCount = 1;
+  config.gapMs = 120;
+  return config;
+}
+
 nekopaw::NekoPaw::Config makePawConfig() {
   nekopaw::NekoPaw::Config config;
   config.httpPort = 80;
@@ -108,6 +137,10 @@ const nekopaw::ButtonInputAdapter::Config kButton1Config = makeButtonConfig(kBut
 const nekopaw::ButtonInputAdapter::Config kButton2Config = makeButtonConfig(kButton2Pin, "button2");
 nekopaw::ButtonInputAdapter button1(kButton1Config);
 nekopaw::ButtonInputAdapter button2(kButton2Config);
+const nekopaw::RgbLedAdapter::Config kLedConfig = makeLedConfig();
+nekopaw::RgbLedAdapter statusLed(kLedConfig);
+const nekopaw::SimpleBuzzerAdapter::Config kBuzzerConfig = makeBuzzerConfig();
+nekopaw::SimpleBuzzerAdapter buzzer(kBuzzerConfig);
 const nekopaw::NekoPaw::Config kPawConfig = makePawConfig();
 nekopaw::NekoPaw paw(kPawConfig);
 
@@ -167,6 +200,8 @@ void setup() {
   paw.addSensor(&battery);
   paw.addInput(&button1);
   paw.addInput(&button2);
+  paw.addOutput(&statusLed);
+  paw.addOutput(&buzzer);
 
   if (!kHasWiFiCredentials) {
     showMissingCredentialsScreen();
@@ -207,6 +242,12 @@ void setup() {
   Serial.print("Events: http://");
   Serial.print(ip);
   Serial.println("/api/bridge/events");
+  Serial.print("Confirm: http://");
+  Serial.print(ip);
+  Serial.println("/api/bridge/display/confirm");
+  Serial.print("Outputs: http://");
+  Serial.print(ip);
+  Serial.println("/api/bridge/outputs?id=led_rgb");
 }
 
 void loop() {
