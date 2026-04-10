@@ -1,0 +1,42 @@
+---
+name: nekopaw-render
+description: Render Markdown or scene JSON into NekoPaw preview PNG and 1bpp bitmap artifacts.
+---
+
+# NekoPaw Render
+
+Use this skill when the user wants to turn content into display-ready bitmap files for a NekoPaw device.
+
+Environment and setup:
+
+- Install runtime packages with `pip install -r skill/render/requirements.txt`
+- Install the browser binary with `python -m playwright install chromium`
+
+Agent workflow:
+
+1. Decide whether the input is `Markdown` or `scene json`.
+2. Render a preview PNG first so the layout can be inspected.
+3. Convert that preview into a raw `1bpp bitmap` file.
+4. If the user wants to show it on a device, hand the bitmap file to `python skill/bridge_cli.py display bitmap --input ...`
+
+Examples:
+
+```bash
+python skill/render_cli.py markdown --input note.md --preview out/note.png --bitmap out/note.bin
+
+python skill/render_cli.py scene --input scene.json --preview out/scene.png --bitmap out/scene.bin
+
+python skill/render_cli.py bitmap --input out/scene.png --output out/scene.bin --dither floyd-steinberg
+
+python skill/render_cli.py confirm-assets \
+  --title "Smart Home" \
+  --body "Turn on the fan?" \
+  --output-dir out/confirm
+```
+
+Notes:
+
+- `markdown` supports regular text flow and the first image block as a figure sidebar.
+- `scene` is the free-layout path for absolute-positioned text and image blocks.
+- `confirm-assets` emits `pending` / `confirmed` / `cancelled` / `timeout` preview and bitmap files together.
+- Successful commands print JSON to stdout and exit `0`. Local validation, dependency, file, or rendering errors print local JSON and exit `2`.

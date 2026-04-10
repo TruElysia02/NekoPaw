@@ -11,6 +11,16 @@ pio run
 
 `examples/BasicDisplay` uses a local `platformio_override.ini` for board-specific settings such as WiFi credentials and panel driver selection. On boot, the example now shows a welcome/status page on the e-ink display so you can confirm whether it is waiting for WiFi, failed to connect, or is ready with an IP address.
 
+## Status
+
+- Device-side phases through the current `bridge_cli.py` flow are complete as of 2026-03-25.
+- The separate `render skill` is now in the repository and can render `Markdown` or `scene json` into preview PNGs and device-ready `1bpp bitmap` files.
+- Live planning now stays in GitHub Issues instead of duplicated local TODO checklists.
+- Current epic: `#1` https://github.com/TruElysia02/NekoPaw/issues/1
+- Current priority path: `#9` low-res clarity optimization, then `#5` confirm bitmap state wiring.
+- Follow-up layout work: `#10` scene json v2, then `#7` pretext.
+- Hardware blocker tracked separately: `#8` buzzer reset issue.
+
 Current device endpoints:
 
 - `GET /api/bridge/device`

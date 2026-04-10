@@ -7,6 +7,8 @@ description: Control a NekoPaw device via HTTP (/api/bridge/*) using skill/bridg
 
 Use this skill when the user wants to read sensors, display text or bitmaps, wait for a confirm result, manage watches, or drive outputs on a NekoPaw device.
 
+For preview rendering, `1bpp bitmap` generation, `scene json`, or confirm bitmap asset generation, use the separate render skill at `skill/render/SKILL.md`.
+
 Environment variables:
 
 - `NEKOPAW_URL`: device or gateway base URL, for example `http://192.168.1.123`
