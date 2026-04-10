@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from html import escape
 import base64
+from io import BytesIO
+from html import escape
 import mimetypes
 import re
 from pathlib import Path
@@ -17,6 +18,11 @@ DEFAULT_SCALE = 4
 DEFAULT_THRESHOLD = 160
 DEFAULT_FIT = "contain"
 DEFAULT_DITHER = "none"
+DEFAULT_PROFILE_NAME = "default"
+EPD_PROFILE_NAME = "epd_296x128_bw"
+COMPOSITION_SINGLE_LAYER_PREVIEW = "single-layer-preview"
+COMPOSITION_SINGLE_LAYER_IMAGE = "single-layer-image"
+COMPOSITION_LAYERED_FOREGROUND = "layered-foreground-overlay"
 
 VALID_FIT = ("contain", "cover", "stretch")
 VALID_DITHER = ("none", "floyd-steinberg")
@@ -67,6 +73,60 @@ class BitmapArtifact:
     height: int
     bitmap_bytes: bytes
     bitmap_byte_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class RenderProfile:
+    name: str
+    composition: str
+    css_vars: dict[str, str]
+    foreground_threshold: int | None = None
+
+
+DEFAULT_RENDER_PROFILE = RenderProfile(
+    name=DEFAULT_PROFILE_NAME,
+    composition=COMPOSITION_SINGLE_LAYER_PREVIEW,
+    css_vars={},
+)
+
+EPD_RENDER_PROFILE = RenderProfile(
+    name=EPD_PROFILE_NAME,
+    composition=COMPOSITION_LAYERED_FOREGROUND,
+    foreground_threshold=208,
+    css_vars={
+        "--muted": "#111111",
+        "--frame-stroke": "2px",
+        "--md-kicker-size": "7px",
+        "--md-kicker-letter": "0.06em",
+        "--md-kicker-transform": "none",
+        "--md-title-size": "18px",
+        "--md-subtitle-size": "12px",
+        "--md-heading-size": "10px",
+        "--md-heading-letter": "0.03em",
+        "--md-heading-transform": "none",
+        "--md-body-size": "10px",
+        "--md-body-line": "1.2",
+        "--md-footer-size": "8px",
+        "--md-footer-letter": "0.02em",
+        "--md-chip-size": "10px",
+        "--scene-title-size": "18px",
+        "--scene-subtitle-size": "12px",
+        "--scene-body-size": "10px",
+        "--scene-body-line": "1.18",
+        "--scene-caption-size": "9px",
+        "--scene-caption-letter": "0.03em",
+        "--scene-caption-transform": "none",
+        "--scene-badge-size": "10px",
+        "--scene-badge-letter": "0em",
+        "--scene-badge-transform": "none",
+    },
+)
+
+
+def resolve_render_profile(settings: RenderSettings) -> RenderProfile:
+    if settings.width == DEFAULT_WIDTH and settings.height == DEFAULT_HEIGHT:
+        return EPD_RENDER_PROFILE
+    return DEFAULT_RENDER_PROFILE
 
 
 def _require_markdown():
@@ -181,14 +241,24 @@ def markdown_to_html(markdown_text: str, base_dir: Path | None = None, *, width:
     figure_html, body_html = _extract_first_figure(rendered)
 
     article_parts = [
-        '<section class="md-copy">',
-        '<div class="md-kicker">NekoPaw render preview</div>',
+        '<section class="md-copy" data-np-layer="foreground">',
+        '<div class="md-kicker" data-np-layer="foreground">NekoPaw render preview</div>',
         body_html or "<p>(empty)</p>",
-        f'<footer class="md-footer"><span>{width}x{height} preview</span><span class="md-chip">markdown</span></footer>',
+        (
+            f'<footer class="md-footer" data-np-layer="foreground">'
+            f"<span>{width}x{height} preview</span>"
+            '<span class="md-chip" data-np-layer="foreground">markdown</span>'
+            "</footer>"
+        ),
         "</section>",
     ]
     if figure_html is not None:
-        article_parts.append(f'<aside class="md-figure">{figure_html}</aside>')
+        article_parts.append(
+            '<aside class="md-figure">'
+            f'<div class="md-figure-frame" data-np-layer="image">{figure_html}</div>'
+            '<span class="md-figure-label" data-np-layer="foreground">image</span>'
+            "</aside>"
+        )
     return "".join(article_parts), figure_html is not None
 
 
@@ -233,7 +303,7 @@ def _scene_text_block(block: dict[str, Any], index: int) -> str:
         classes.append("scene-invert")
 
     style = _scene_position_style(block, index)
-    return f'<div class="{" ".join(classes)}" style="{style}">{escape(text)}</div>'
+    return f'<div class="{" ".join(classes)}" data-np-layer="foreground" style="{style}">{escape(text)}</div>'
 
 
 def _scene_image_block(block: dict[str, Any], index: int, base_dir: Path | None) -> str:
@@ -257,14 +327,12 @@ def _scene_image_block(block: dict[str, Any], index: int, base_dir: Path | None)
     if fit not in ("cover", "contain", "fill"):
         raise RenderPipelineError("INVALID_JSON", "image block fit is invalid", {"index": index, "fit": fit})
 
-    classes = ["scene-block", "scene-block--image"]
-    if block.get("frame"):
-        classes.append("scene-frame")
-
     image_style = f"object-fit:{fit};"
+    frame_overlay = '<span class="scene-frame-overlay" data-np-layer="foreground"></span>' if block.get("frame") else ""
     return (
-        f'<figure class="{" ".join(classes)}" style="{_scene_position_style(block, index)}">'
+        f'<figure class="scene-block scene-block--image" data-np-layer="image" style="{_scene_position_style(block, index)}">'
         f'<img alt="{escape(str(block.get("alt", "")))}" src="{src_value}" style="{image_style}">'
+        f"{frame_overlay}"
         "</figure>"
     )
 
@@ -316,6 +384,84 @@ def scene_to_html(scene: dict[str, Any], base_dir: Path | None = None) -> str:
     return "".join(html_blocks)
 
 
+def _wait_for_render_ready(page: Any) -> None:
+    page.evaluate(
+        """
+        async () => {
+          const images = Array.from(document.images);
+          await Promise.all(images.map((img) => {
+            if (img.complete) {
+              return null;
+            }
+            return new Promise((resolve) => {
+              const done = () => resolve(null);
+              img.addEventListener("load", done, { once: true });
+              img.addEventListener("error", done, { once: true });
+            });
+          }));
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        }
+        """
+    )
+
+
+def _set_capture_mode(page: Any, capture_mode: str | None) -> None:
+    page.evaluate(
+        """
+        (mode) => {
+          if (mode) {
+            document.body.dataset.npCapture = mode;
+          } else {
+            delete document.body.dataset.npCapture;
+          }
+        }
+        """,
+        capture_mode,
+    )
+    page.evaluate("() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+
+
+def render_html_captures(
+    html_document: str,
+    preview_path: str | Path,
+    *,
+    width: int,
+    height: int,
+    scale: int,
+) -> tuple[tuple[int, int], dict[str, bytes]]:
+    return render_html_capture_set(html_document, preview_path, width=width, height=height, scale=scale, capture_modes=())
+
+
+def render_html_capture_set(
+    html_document: str,
+    preview_path: str | Path,
+    *,
+    width: int,
+    height: int,
+    scale: int,
+    capture_modes: Iterable[str],
+) -> tuple[tuple[int, int], dict[str, bytes]]:
+    sync_playwright = _require_playwright()
+    preview_file = _normalize_output_path(preview_path)
+    captures: dict[str, bytes] = {}
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=scale)
+            page.set_content(html_document, wait_until="load")
+            _wait_for_render_ready(page)
+            page.locator(".np-page").screenshot(path=str(preview_file))
+            for capture_mode in capture_modes:
+                _set_capture_mode(page, capture_mode)
+                captures[capture_mode] = page.locator(".np-page").screenshot()
+            _set_capture_mode(page, None)
+        finally:
+            browser.close()
+
+    return (width * scale, height * scale), captures
+
+
 def render_html_preview(
     html_document: str,
     preview_path: str | Path,
@@ -324,36 +470,8 @@ def render_html_preview(
     height: int,
     scale: int,
 ) -> tuple[int, int]:
-    sync_playwright = _require_playwright()
-    preview_file = _normalize_output_path(preview_path)
-
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
-        try:
-            page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=scale)
-            page.set_content(html_document, wait_until="load")
-            page.evaluate(
-                """
-                async () => {
-                  const images = Array.from(document.images);
-                  await Promise.all(images.map((img) => {
-                    if (img.complete) {
-                      return null;
-                    }
-                    return new Promise((resolve) => {
-                      const done = () => resolve(null);
-                      img.addEventListener("load", done, { once: true });
-                      img.addEventListener("error", done, { once: true });
-                    });
-                  }));
-                }
-                """
-            )
-            page.locator(".np-page").screenshot(path=str(preview_file))
-        finally:
-            browser.close()
-
-    return width * scale, height * scale
+    preview_size, _ = render_html_captures(html_document, preview_path, width=width, height=height, scale=scale)
+    return preview_size
 
 
 def render_markdown_preview(
@@ -365,8 +483,16 @@ def render_markdown_preview(
     title: str = "NekoPaw Markdown Preview",
 ) -> tuple[int, int]:
     settings.validate()
+    profile = resolve_render_profile(settings)
     content_html, has_figure = markdown_to_html(markdown_text, base_dir, width=settings.width, height=settings.height)
-    document = build_markdown_document(title, content_html, has_figure, settings.width, settings.height)
+    document = build_markdown_document(
+        title,
+        content_html,
+        has_figure,
+        settings.width,
+        settings.height,
+        theme=profile.css_vars,
+    )
     return render_html_preview(
         document,
         preview_path,
@@ -385,7 +511,14 @@ def render_scene_preview(
     title: str = "NekoPaw Scene Preview",
 ) -> tuple[int, int]:
     settings.validate()
-    document = build_scene_document(title, scene_to_html(scene, base_dir), settings.width, settings.height)
+    profile = resolve_render_profile(settings)
+    document = build_scene_document(
+        title,
+        scene_to_html(scene, base_dir),
+        settings.width,
+        settings.height,
+        theme=profile.css_vars,
+    )
     return render_html_preview(
         document,
         preview_path,
@@ -439,6 +572,44 @@ def _floyd_steinberg(values: list[int], width: int, height: int, threshold: int)
     return output
 
 
+def reduce_oversampled_binary(
+    values: list[int],
+    *,
+    source_width: int,
+    source_height: int,
+    target_width: int,
+    target_height: int,
+) -> list[int]:
+    reduced: list[int] = []
+    for y in range(target_height):
+        start_y = (y * source_height) // target_height
+        end_y = max(start_y + 1, ((y + 1) * source_height) // target_height)
+        for x in range(target_width):
+            start_x = (x * source_width) // target_width
+            end_x = max(start_x + 1, ((x + 1) * source_width) // target_width)
+            has_black = False
+            for source_y in range(start_y, end_y):
+                row_offset = source_y * source_width
+                for source_x in range(start_x, end_x):
+                    if values[row_offset + source_x] == 0:
+                        has_black = True
+                        break
+                if has_black:
+                    break
+            reduced.append(0 if has_black else 255)
+    return reduced
+
+
+def overlay_mono_layers(image_values: list[int], foreground_values: list[int]) -> list[int]:
+    if len(image_values) != len(foreground_values):
+        raise RenderPipelineError(
+            "INVALID_ARGUMENT",
+            "image and foreground layers must have the same pixel count",
+            {"image": len(image_values), "foreground": len(foreground_values)},
+        )
+    return [0 if foreground == 0 else image for image, foreground in zip(image_values, foreground_values)]
+
+
 def pack_bitmap_bytes(values: list[int], width: int, height: int) -> bytes:
     stride = (width + 7) // 8
     output = bytearray(stride * height)
@@ -454,6 +625,60 @@ def pack_bitmap_bytes(values: list[int], width: int, height: int) -> bytes:
     return bytes(output)
 
 
+def _mono_image_from_values(image_module: Any, values: list[int], width: int, height: int) -> Any:
+    mono_image = image_module.new("L", (width, height))
+    mono_image.putdata(values)
+    return mono_image
+
+
+def _save_mono_preview(image_module: Any, values: list[int], width: int, height: int, path: Path) -> None:
+    mono_image = _mono_image_from_values(image_module, values, width, height)
+    mono_image.save(path)
+
+
+def _load_grayscale_bytes(image_bytes: bytes, image_module: Any) -> Any:
+    try:
+        with image_module.open(BytesIO(image_bytes)) as raw_image:
+            return raw_image.convert("L")
+    except OSError as exc:
+        raise RenderPipelineError(
+            "FILE_READ_FAILED",
+            "failed to decode rendered image bytes",
+            {"reason": str(exc)},
+        ) from exc
+
+
+def _mono_values_from_grayscale(values: list[int], *, width: int, height: int, threshold: int, dither: str) -> list[int]:
+    if dither == "floyd-steinberg":
+        return _floyd_steinberg(values, width, height, threshold)
+    return _threshold_pixels(values, threshold)
+
+
+def _bitmap_artifact_from_values(
+    image_module: Any,
+    values: list[int],
+    *,
+    width: int,
+    height: int,
+    bitmap_path: str | Path,
+    bw_preview_path: str | Path | None = None,
+) -> BitmapArtifact:
+    bitmap_file = _normalize_output_path(bitmap_path)
+    bw_preview_file = _normalize_output_path(bw_preview_path) if bw_preview_path is not None else None
+    bitmap_bytes = pack_bitmap_bytes(values, width, height)
+    bitmap_file.write_bytes(bitmap_bytes)
+
+    if bw_preview_file is not None:
+        _save_mono_preview(image_module, values, width, height, bw_preview_file)
+
+    return BitmapArtifact(
+        width=width,
+        height=height,
+        bitmap_bytes=bitmap_bytes,
+        bitmap_byte_count=len(bitmap_bytes),
+    )
+
+
 def convert_image_to_bitmap(
     image_path: str | Path,
     settings: RenderSettings,
@@ -463,8 +688,6 @@ def convert_image_to_bitmap(
 ) -> BitmapArtifact:
     settings.validate()
     Image, ImageOps = _require_pillow()
-    bitmap_file = _normalize_output_path(bitmap_path)
-    bw_preview_file = _normalize_output_path(bw_preview_path) if bw_preview_path is not None else None
 
     try:
         with Image.open(image_path) as raw_image:
@@ -478,25 +701,130 @@ def convert_image_to_bitmap(
         ) from exc
 
     pixels = list(grayscale.getdata())
-    if settings.dither == "floyd-steinberg":
-        mono_values = _floyd_steinberg(pixels, settings.width, settings.height, settings.threshold)
-    else:
-        mono_values = _threshold_pixels(pixels, settings.threshold)
-
-    bitmap_bytes = pack_bitmap_bytes(mono_values, settings.width, settings.height)
-    bitmap_file.write_bytes(bitmap_bytes)
-
-    if bw_preview_file is not None:
-        mono_image = Image.new("L", (settings.width, settings.height))
-        mono_image.putdata(mono_values)
-        mono_image.save(bw_preview_file)
-
-    return BitmapArtifact(
+    mono_values = _mono_values_from_grayscale(
+        pixels,
         width=settings.width,
         height=settings.height,
-        bitmap_bytes=bitmap_bytes,
-        bitmap_byte_count=len(bitmap_bytes),
+        threshold=settings.threshold,
+        dither=settings.dither,
     )
+
+    return _bitmap_artifact_from_values(
+        Image,
+        mono_values,
+        width=settings.width,
+        height=settings.height,
+        bitmap_path=bitmap_path,
+        bw_preview_path=bw_preview_path,
+    )
+
+
+def convert_layer_captures_to_bitmap(
+    image_capture: bytes,
+    foreground_capture: bytes,
+    settings: RenderSettings,
+    *,
+    bitmap_path: str | Path,
+    bw_preview_path: str | Path | None = None,
+    foreground_threshold: int,
+) -> BitmapArtifact:
+    settings.validate()
+    Image, ImageOps = _require_pillow()
+
+    image_layer = _load_grayscale_bytes(image_capture, Image)
+    image_layer = _resize_image(image_layer, settings, Image, ImageOps)
+    image_values = _mono_values_from_grayscale(
+        list(image_layer.getdata()),
+        width=settings.width,
+        height=settings.height,
+        threshold=settings.threshold,
+        dither=settings.dither,
+    )
+
+    foreground_layer = _load_grayscale_bytes(foreground_capture, Image)
+    foreground_high_res = _threshold_pixels(list(foreground_layer.getdata()), foreground_threshold)
+    foreground_values = reduce_oversampled_binary(
+        foreground_high_res,
+        source_width=foreground_layer.width,
+        source_height=foreground_layer.height,
+        target_width=settings.width,
+        target_height=settings.height,
+    )
+
+    composed_values = overlay_mono_layers(image_values, foreground_values)
+    return _bitmap_artifact_from_values(
+        Image,
+        composed_values,
+        width=settings.width,
+        height=settings.height,
+        bitmap_path=bitmap_path,
+        bw_preview_path=bw_preview_path,
+    )
+
+
+def _artifact_metadata(preview_path: str | Path, settings: RenderSettings, profile: RenderProfile) -> dict[str, Any]:
+    return {
+        "previewPath": str(Path(preview_path)),
+        "width": settings.width,
+        "height": settings.height,
+        "dither": settings.dither,
+        "threshold": settings.threshold,
+        "fit": settings.fit,
+        "profile": profile.name,
+        "composition": profile.composition,
+    }
+
+
+def _render_document_to_artifacts(
+    document: str,
+    *,
+    preview_path: str | Path,
+    settings: RenderSettings,
+    profile: RenderProfile,
+    bitmap_path: str | Path | None = None,
+    bw_preview_path: str | Path | None = None,
+) -> dict[str, Any]:
+    capture_modes: tuple[str, ...] = ()
+    if bitmap_path is not None and profile.composition == COMPOSITION_LAYERED_FOREGROUND:
+        capture_modes = ("image", "foreground")
+
+    preview_size, captures = render_html_capture_set(
+        document,
+        preview_path,
+        width=settings.width,
+        height=settings.height,
+        scale=settings.scale,
+        capture_modes=capture_modes,
+    )
+
+    result: dict[str, Any] = {
+        "previewSize": {"width": preview_size[0], "height": preview_size[1]},
+        **_artifact_metadata(preview_path, settings, profile),
+    }
+
+    if bitmap_path is not None:
+        if capture_modes:
+            bitmap_artifact = convert_layer_captures_to_bitmap(
+                captures["image"],
+                captures["foreground"],
+                settings,
+                bitmap_path=bitmap_path,
+                bw_preview_path=bw_preview_path,
+                foreground_threshold=profile.foreground_threshold or settings.threshold,
+            )
+        else:
+            bitmap_artifact = convert_image_to_bitmap(
+                preview_path,
+                settings,
+                bitmap_path=bitmap_path,
+                bw_preview_path=bw_preview_path,
+            )
+        result["bitmapPath"] = str(Path(bitmap_path))
+        result["bitmapBytes"] = bitmap_artifact.bitmap_byte_count
+        if bw_preview_path is not None:
+            result["bwPreviewPath"] = str(Path(bw_preview_path))
+
+    return result
 
 
 def render_markdown_to_artifacts(
@@ -508,30 +836,25 @@ def render_markdown_to_artifacts(
     bw_preview_path: str | Path | None = None,
     base_dir: Path | None = None,
 ) -> dict[str, Any]:
-    preview_size = render_markdown_preview(markdown_text, preview_path, settings, base_dir=base_dir)
-    result: dict[str, Any] = {
-        "previewPath": str(Path(preview_path)),
-        "previewSize": {"width": preview_size[0], "height": preview_size[1]},
-        "width": settings.width,
-        "height": settings.height,
-        "dither": settings.dither,
-        "threshold": settings.threshold,
-        "fit": settings.fit,
-    }
-
-    if bitmap_path is not None:
-        bitmap_artifact = convert_image_to_bitmap(
-            preview_path,
-            settings,
-            bitmap_path=bitmap_path,
-            bw_preview_path=bw_preview_path,
-        )
-        result["bitmapPath"] = str(Path(bitmap_path))
-        result["bitmapBytes"] = bitmap_artifact.bitmap_byte_count
-        if bw_preview_path is not None:
-            result["bwPreviewPath"] = str(Path(bw_preview_path))
-
-    return result
+    settings.validate()
+    profile = resolve_render_profile(settings)
+    content_html, has_figure = markdown_to_html(markdown_text, base_dir, width=settings.width, height=settings.height)
+    document = build_markdown_document(
+        "NekoPaw Markdown Preview",
+        content_html,
+        has_figure,
+        settings.width,
+        settings.height,
+        theme=profile.css_vars,
+    )
+    return _render_document_to_artifacts(
+        document,
+        preview_path=preview_path,
+        settings=settings,
+        profile=profile,
+        bitmap_path=bitmap_path,
+        bw_preview_path=bw_preview_path,
+    )
 
 
 def render_scene_to_artifacts(
@@ -543,30 +866,23 @@ def render_scene_to_artifacts(
     bw_preview_path: str | Path | None = None,
     base_dir: Path | None = None,
 ) -> dict[str, Any]:
-    preview_size = render_scene_preview(scene, preview_path, settings, base_dir=base_dir)
-    result: dict[str, Any] = {
-        "previewPath": str(Path(preview_path)),
-        "previewSize": {"width": preview_size[0], "height": preview_size[1]},
-        "width": settings.width,
-        "height": settings.height,
-        "dither": settings.dither,
-        "threshold": settings.threshold,
-        "fit": settings.fit,
-    }
-
-    if bitmap_path is not None:
-        bitmap_artifact = convert_image_to_bitmap(
-            preview_path,
-            settings,
-            bitmap_path=bitmap_path,
-            bw_preview_path=bw_preview_path,
-        )
-        result["bitmapPath"] = str(Path(bitmap_path))
-        result["bitmapBytes"] = bitmap_artifact.bitmap_byte_count
-        if bw_preview_path is not None:
-            result["bwPreviewPath"] = str(Path(bw_preview_path))
-
-    return result
+    settings.validate()
+    profile = resolve_render_profile(settings)
+    document = build_scene_document(
+        "NekoPaw Scene Preview",
+        scene_to_html(scene, base_dir),
+        settings.width,
+        settings.height,
+        theme=profile.css_vars,
+    )
+    return _render_document_to_artifacts(
+        document,
+        preview_path=preview_path,
+        settings=settings,
+        profile=profile,
+        bitmap_path=bitmap_path,
+        bw_preview_path=bw_preview_path,
+    )
 
 
 def build_confirm_scenes(
@@ -636,15 +952,6 @@ def build_confirm_scenes(
                 },
                 {"type": "text", "x": 16, "y": 42, "w": width - 32, "h": 26, "text": header_title, "role": "subtitle"},
                 {"type": "text", "x": 16, "y": 74, "w": width - 32, "h": 30, "text": message, "role": "title"},
-                {
-                    "type": "text",
-                    "x": 16,
-                    "y": height - 20,
-                    "w": width - 32,
-                    "h": 10,
-                    "text": "render skill bitmap feedback",
-                    "role": "caption",
-                },
             ]
         }
 

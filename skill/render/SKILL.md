@@ -39,4 +39,5 @@ Notes:
 - `markdown` supports regular text flow and the first image block as a figure sidebar.
 - `scene` is the free-layout path for absolute-positioned text and image blocks.
 - `confirm-assets` emits `pending` / `confirmed` / `cancelled` / `timeout` preview and bitmap files together.
+- Those `confirm-assets` outputs can be sent to the device with `python skill/bridge_cli.py display confirm create --assets-dir out/confirm`.
 - Successful commands print JSON to stdout and exit `0`. Local validation, dependency, file, or rendering errors print local JSON and exit `2`.

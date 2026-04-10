@@ -29,7 +29,8 @@ void BridgeServer::attachRoutes() {
              [this]() { dispatcher_.handleDisplayBitmapRaw(server_); });
   server_.on("/api/bridge/display/state", HTTP_GET, [this]() { dispatch(&CommandDispatcher::handleDisplayState); });
   server_.on("/api/bridge/display/confirm", HTTP_POST,
-             [this]() { dispatch(&CommandDispatcher::handleDisplayConfirmCreate); });
+             [this]() { dispatch(&CommandDispatcher::handleDisplayConfirmCreate); },
+             [this]() { dispatcher_.handleDisplayConfirmCreateRaw(server_); });
   server_.on("/api/bridge/display/confirm", HTTP_GET, [this]() { dispatch(&CommandDispatcher::handleDisplayConfirmGet); });
   server_.on("/api/bridge/display/confirm", HTTP_DELETE,
              [this]() { dispatch(&CommandDispatcher::handleDisplayConfirmDelete); });

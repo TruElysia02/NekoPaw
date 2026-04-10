@@ -48,6 +48,8 @@ python skill/bridge_cli.py device set-description --description "Living room e-i
 python skill/bridge_cli.py display text --title "Greeting" --body "Hello NekoPaw"
 python skill/bridge_cli.py display state
 python skill/bridge_cli.py display confirm create --title "Smart Home" --body "Turn on the fan?"
+python skill/render_cli.py confirm-assets --title "Smart Home" --body "Turn on the fan?" --output-dir out/confirm
+python skill/bridge_cli.py display confirm create --assets-dir out/confirm
 python skill/bridge_cli.py display confirm wait --id cfm_000001
 python skill/bridge_cli.py events watch input --id button1_click --input button1 --trigger click
 python skill/bridge_cli.py outputs led set --color green --duration 1500
@@ -55,6 +57,7 @@ python skill/bridge_cli.py outputs buzzer beep --frequency 1000 --duration 200 -
 ```
 
 `display bitmap` now performs a local preflight by calling `/api/bridge/device` first and checking that the input byte size matches the reported display dimensions before uploading.
+`display confirm create --assets-dir ...` uses the same preflight idea, then uploads `pending` / `confirmed` / `cancelled` / `timeout` four-page bitmap packs through the existing confirm route while keeping the old text JSON flow available.
 
 CLI tests:
 

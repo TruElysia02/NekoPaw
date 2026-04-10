@@ -3,8 +3,22 @@ from __future__ import annotations
 from html import escape
 
 
-def _document_shell(title: str, body_class: str, inner_html: str, width: int, height: int) -> str:
-    page_style = f"--page-width:{width}px;--page-height:{height}px;"
+def _theme_style(theme: dict[str, str] | None) -> str:
+    if not theme:
+        return ""
+    return "".join(f"{name}:{value};" for name, value in theme.items())
+
+
+def _document_shell(
+    title: str,
+    body_class: str,
+    inner_html: str,
+    width: int,
+    height: int,
+    *,
+    theme: dict[str, str] | None = None,
+) -> str:
+    page_style = f"--page-width:{width}px;--page-height:{height}px;{_theme_style(theme)}"
     return f"""<!doctype html>
 <html lang="en">
   <head>
@@ -21,6 +35,30 @@ def _document_shell(title: str, body_class: str, inner_html: str, width: int, he
         --soft: #d7d7d2;
         --page-width: 296px;
         --page-height: 128px;
+        --frame-stroke: 2px;
+        --md-kicker-size: 8px;
+        --md-kicker-letter: 0.24em;
+        --md-kicker-transform: uppercase;
+        --md-title-size: 18px;
+        --md-subtitle-size: 13px;
+        --md-heading-size: 10px;
+        --md-heading-letter: 0.08em;
+        --md-heading-transform: uppercase;
+        --md-body-size: 10px;
+        --md-body-line: 1.24;
+        --md-footer-size: 8px;
+        --md-footer-letter: 0.08em;
+        --md-chip-size: 9px;
+        --scene-title-size: 18px;
+        --scene-subtitle-size: 12px;
+        --scene-body-size: 10px;
+        --scene-body-line: 1.22;
+        --scene-caption-size: 8px;
+        --scene-caption-letter: 0.14em;
+        --scene-caption-transform: uppercase;
+        --scene-badge-size: 9px;
+        --scene-badge-letter: 0.12em;
+        --scene-badge-transform: uppercase;
         font-family: "Segoe UI", "Microsoft YaHei", "Noto Sans", sans-serif;
       }}
 
@@ -92,9 +130,9 @@ def _document_shell(title: str, body_class: str, inner_html: str, width: int, he
       }}
 
       .md-kicker {{
-        font-size: 8px;
-        letter-spacing: 0.24em;
-        text-transform: uppercase;
+        font-size: var(--md-kicker-size);
+        letter-spacing: var(--md-kicker-letter);
+        text-transform: var(--md-kicker-transform);
         color: var(--muted);
       }}
 
@@ -109,7 +147,7 @@ def _document_shell(title: str, body_class: str, inner_html: str, width: int, he
       }}
 
       .md-copy h1 {{
-        font-size: 18px;
+        font-size: var(--md-title-size);
         line-height: 1.02;
         font-weight: 800;
         max-height: 36px;
@@ -117,24 +155,24 @@ def _document_shell(title: str, body_class: str, inner_html: str, width: int, he
       }}
 
       .md-copy h2 {{
-        font-size: 13px;
+        font-size: var(--md-subtitle-size);
         line-height: 1.1;
         font-weight: 700;
       }}
 
       .md-copy h3 {{
-        font-size: 10px;
+        font-size: var(--md-heading-size);
         line-height: 1.15;
         font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
+        text-transform: var(--md-heading-transform);
+        letter-spacing: var(--md-heading-letter);
       }}
 
       .md-copy p,
       .md-copy li,
       .md-copy blockquote {{
-        font-size: 10px;
-        line-height: 1.24;
+        font-size: var(--md-body-size);
+        line-height: var(--md-body-line);
       }}
 
       .md-copy ul,
@@ -164,8 +202,8 @@ def _document_shell(title: str, body_class: str, inner_html: str, width: int, he
         gap: 8px;
         padding-top: 4px;
         border-top: 1px solid rgba(0, 0, 0, 0.2);
-        font-size: 8px;
-        letter-spacing: 0.08em;
+        font-size: var(--md-footer-size);
+        letter-spacing: var(--md-footer-letter);
         text-transform: uppercase;
       }}
 
@@ -178,6 +216,7 @@ def _document_shell(title: str, body_class: str, inner_html: str, width: int, he
         border: 1px solid var(--line);
         background: rgba(0, 0, 0, 0.04);
         font-weight: 700;
+        font-size: var(--md-chip-size);
       }}
 
       .md-figure {{
@@ -187,8 +226,13 @@ def _document_shell(title: str, body_class: str, inner_html: str, width: int, he
         align-items: stretch;
       }}
 
-      .md-figure::after {{
-        content: "image";
+      .md-figure-frame {{
+        position: relative;
+        width: 100%;
+        height: 100%;
+      }}
+
+      .md-figure-label {{
         position: absolute;
         left: 6px;
         bottom: 6px;
@@ -200,12 +244,20 @@ def _document_shell(title: str, body_class: str, inner_html: str, width: int, he
         text-transform: uppercase;
       }}
 
-      .md-figure img {{
+      .md-figure-frame img {{
         width: 100%;
         height: 100%;
         object-fit: cover;
-        border: 2px solid var(--line);
         filter: grayscale(1) contrast(1.05);
+      }}
+
+      .md-figure-frame::after,
+      .scene-frame-overlay {{
+        content: "";
+        position: absolute;
+        inset: 0;
+        border: var(--frame-stroke) solid var(--line);
+        pointer-events: none;
       }}
 
       .scene-canvas {{
@@ -233,35 +285,35 @@ def _document_shell(title: str, body_class: str, inner_html: str, width: int, he
       }}
 
       .scene-role-title {{
-        font-size: 18px;
+        font-size: var(--scene-title-size);
         line-height: 1.02;
         font-weight: 800;
       }}
 
       .scene-role-subtitle {{
-        font-size: 12px;
+        font-size: var(--scene-subtitle-size);
         line-height: 1.08;
         font-weight: 700;
       }}
 
       .scene-role-body {{
-        font-size: 10px;
-        line-height: 1.22;
+        font-size: var(--scene-body-size);
+        line-height: var(--scene-body-line);
       }}
 
       .scene-role-caption {{
-        font-size: 8px;
+        font-size: var(--scene-caption-size);
         line-height: 1.1;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
+        letter-spacing: var(--scene-caption-letter);
+        text-transform: var(--scene-caption-transform);
         color: var(--muted);
       }}
 
       .scene-role-badge {{
-        font-size: 9px;
+        font-size: var(--scene-badge-size);
         line-height: 1.05;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
+        letter-spacing: var(--scene-badge-letter);
+        text-transform: var(--scene-badge-transform);
         font-weight: 800;
       }}
 
@@ -293,12 +345,36 @@ def _document_shell(title: str, body_class: str, inner_html: str, width: int, he
       }}
 
       .scene-frame {{
-        border: 2px solid var(--line);
+        border: var(--frame-stroke) solid var(--line);
       }}
 
       .scene-invert {{
         background: var(--line);
         color: #f7f7f3;
+      }}
+
+      body[data-np-capture="image"] .np-page,
+      body[data-np-capture="foreground"] .np-page {{
+        background: #ffffff;
+        box-shadow: none;
+      }}
+
+      body[data-np-capture="image"] .np-page::before,
+      body[data-np-capture="foreground"] .np-page::before {{
+        display: none;
+      }}
+
+      body[data-np-capture="image"] [data-np-layer="foreground"] {{
+        visibility: hidden !important;
+      }}
+
+      body[data-np-capture="foreground"] [data-np-layer="image"] {{
+        visibility: hidden !important;
+      }}
+
+      body[data-np-capture="foreground"] .scene-block--image img,
+      body[data-np-capture="foreground"] .md-figure-frame img {{
+        filter: none !important;
       }}
     </style>
   </head>
@@ -311,20 +387,35 @@ def _document_shell(title: str, body_class: str, inner_html: str, width: int, he
 """
 
 
-def build_markdown_document(title: str, content_html: str, has_figure: bool, width: int, height: int) -> str:
+def build_markdown_document(
+    title: str,
+    content_html: str,
+    has_figure: bool,
+    width: int,
+    height: int,
+    *,
+    theme: dict[str, str] | None = None,
+) -> str:
     figure_class = "has-figure" if has_figure else ""
     inner_html = f"""
       <section class="md-shell {figure_class}">
         {content_html}
       </section>
     """
-    return _document_shell(title, "np-page--markdown", inner_html, width, height)
+    return _document_shell(title, "np-page--markdown", inner_html, width, height, theme=theme)
 
 
-def build_scene_document(title: str, content_html: str, width: int, height: int) -> str:
+def build_scene_document(
+    title: str,
+    content_html: str,
+    width: int,
+    height: int,
+    *,
+    theme: dict[str, str] | None = None,
+) -> str:
     inner_html = f"""
       <section class="scene-canvas">
         {content_html}
       </section>
     """
-    return _document_shell(title, "np-page--scene", inner_html, width, height)
+    return _document_shell(title, "np-page--scene", inner_html, width, height, theme=theme)

@@ -33,6 +33,8 @@ python skill/bridge_cli.py display bitmap --input screen_296x128_1bpp.bin
 python skill/bridge_cli.py display state
 
 python skill/bridge_cli.py display confirm create --title "Smart Home" --body "Turn on the fan?"
+python skill/render_cli.py confirm-assets --title "Smart Home" --body "Turn on the fan?" --output-dir out/confirm
+python skill/bridge_cli.py display confirm create --assets-dir out/confirm
 python skill/bridge_cli.py display confirm wait --id cfm_000001
 python skill/bridge_cli.py display confirm cancel --id cfm_000001
 
@@ -52,5 +54,6 @@ python skill/bridge_cli.py outputs buzzer beep --frequency 1000 --duration 200 -
 Notes:
 
 - `display bitmap` uploads raw 1bpp bytes only. The CLI checks the byte size against `/api/bridge/device` before upload.
+- `display confirm create --assets-dir ...` uploads one raw bitmap pack in `pending` -> `confirmed` -> `cancelled` -> `timeout` order and keeps `POST /api/bridge/display/confirm` text mode compatible.
 - `events watch upsert --payload ...` and `outputs send --payload ...` are the raw protocol-mapping entry points when the typed helpers are not enough.
 - Successful commands print JSON to stdout and exit `0`. Device JSON errors are printed as-is and exit `1`. Local validation or network failures print a local JSON error and exit `2`.

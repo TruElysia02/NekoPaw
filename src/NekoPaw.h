@@ -55,6 +55,7 @@ private:
   static constexpr size_t kDeviceIdCapacity = 32;
   static constexpr size_t kDescriptionCapacity = 160;
   static constexpr size_t kConfirmRequestIdCapacity = 20;
+  static constexpr size_t kConfirmBitmapStateCount = 4;
 
   enum class DescriptionSource : uint8_t {
     None = 0,
@@ -68,6 +69,11 @@ private:
     Bitmap = 2,
   };
 
+  enum class ConfirmRenderMode : uint8_t {
+    Text = 0,
+    Bitmap = 1,
+  };
+
   struct DisplayState {
     DisplaySource source = DisplaySource::None;
     uint32_t updatedAtSeconds = 0;
@@ -77,12 +83,14 @@ private:
   struct ConfirmSession {
     bool occupied = false;
     ConfirmState state = ConfirmState::Idle;
+    ConfirmRenderMode renderMode = ConfirmRenderMode::Text;
     char requestId[kConfirmRequestIdCapacity] = {};
     uint32_t startedAtSeconds = 0;
     uint32_t startedAtMillis = 0;
     uint32_t timeoutSeconds = 0;
     uint32_t respondedAtSeconds = 0;
     uint32_t responseTimeMs = 0;
+    size_t bitmapPageBytes = 0;
   };
 
   void ensureDeviceId();
@@ -94,10 +102,13 @@ private:
   bool hasPendingConfirm() const;
   bool matchesConfirmRequestId(const char* requestId) const;
   bool startConfirm(const DisplayProvider::ConfirmContent& content, uint32_t timeoutSeconds, bool fullRefresh);
+  bool startConfirmBitmap(uint32_t timeoutSeconds, bool fullRefresh);
   bool resolveConfirm(ConfirmState state);
   bool cancelConfirm();
   void handleInputEvent(const InputProvider::Info& info, InputProvider::Event event);
   void tickConfirm();
+  bool ensureConfirmBitmapStorage(size_t pageBytes);
+  bool showConfirmBitmapState(ConfirmState state, bool fullRefresh);
 
   Config config_;
   DisplayProvider* display_ = nullptr;
@@ -113,6 +124,8 @@ private:
   DescriptionSource descriptionSource_ = DescriptionSource::None;
   DisplayState displayState_;
   ConfirmSession confirm_;
+  uint8_t* confirmBitmapStorage_ = nullptr;
+  size_t confirmBitmapStorageCapacity_ = 0;
   uint32_t nextConfirmSequence_ = 1;
   BridgeServer* bridge_ = nullptr;
   CommandDispatcher* dispatcher_ = nullptr;

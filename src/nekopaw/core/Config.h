@@ -9,6 +9,7 @@ namespace nekopaw::core {
 constexpr char kProtocolVersion[] = "1.0";
 constexpr char kFirmwareVersion[] = "NekoPaw/0.1.0";
 constexpr size_t kBitmapBufferLimit = 16384;
+constexpr size_t kConfirmBitmapPackBufferLimit = 65536;
 constexpr char kPreferencesNamespace[] = "nekopaw";
 constexpr char kDescriptionKey[] = "description";
 

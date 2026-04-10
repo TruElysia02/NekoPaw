@@ -15,6 +15,33 @@
 
 namespace nekopaw {
 
+namespace {
+
+size_t confirmBitmapOffset(NekoPaw::ConfirmState state, size_t pageBytes) {
+  size_t pageIndex = 0;
+  switch (state) {
+    case NekoPaw::ConfirmState::Pending:
+      pageIndex = 0;
+      break;
+    case NekoPaw::ConfirmState::Confirmed:
+      pageIndex = 1;
+      break;
+    case NekoPaw::ConfirmState::Cancelled:
+      pageIndex = 2;
+      break;
+    case NekoPaw::ConfirmState::Timeout:
+      pageIndex = 3;
+      break;
+    case NekoPaw::ConfirmState::Idle:
+    default:
+      return 0;
+  }
+
+  return pageIndex * pageBytes;
+}
+
+} // namespace
+
 NekoPaw::NekoPaw() = default;
 
 NekoPaw::NekoPaw(const Config& config) : config_(config) {}
@@ -146,6 +173,7 @@ bool NekoPaw::startConfirm(const DisplayProvider::ConfirmContent& content, uint3
   ConfirmSession nextConfirm;
   nextConfirm.occupied = true;
   nextConfirm.state = ConfirmState::Pending;
+  nextConfirm.renderMode = ConfirmRenderMode::Text;
   nextConfirm.startedAtSeconds = nowSeconds();
   nextConfirm.startedAtMillis = millis();
   nextConfirm.timeoutSeconds = timeoutSeconds;
@@ -162,6 +190,43 @@ bool NekoPaw::startConfirm(const DisplayProvider::ConfirmContent& content, uint3
   }
 
   confirm_ = nextConfirm;
+  markDisplayState(DisplaySource::Text, 0);
+  return true;
+}
+
+bool NekoPaw::startConfirmBitmap(uint32_t timeoutSeconds, bool fullRefresh) {
+  if (display_ == nullptr || hasPendingConfirm() || confirmBitmapStorage_ == nullptr) {
+    return false;
+  }
+
+  const DisplayProvider::Capabilities capabilities = display_->capabilities();
+  const size_t pageBytes = core::bitmapByteLength(capabilities.width, capabilities.height);
+  if (pageBytes == 0 || confirmBitmapStorageCapacity_ < pageBytes * kConfirmBitmapStateCount) {
+    return false;
+  }
+
+  ConfirmSession nextConfirm;
+  nextConfirm.occupied = true;
+  nextConfirm.state = ConfirmState::Pending;
+  nextConfirm.renderMode = ConfirmRenderMode::Bitmap;
+  nextConfirm.startedAtSeconds = nowSeconds();
+  nextConfirm.startedAtMillis = millis();
+  nextConfirm.timeoutSeconds = timeoutSeconds;
+  nextConfirm.bitmapPageBytes = pageBytes;
+
+  snprintf(nextConfirm.requestId, sizeof(nextConfirm.requestId), "cfm_%06lu",
+           static_cast<unsigned long>(nextConfirmSequence_));
+  ++nextConfirmSequence_;
+  if (nextConfirmSequence_ == 0) {
+    nextConfirmSequence_ = 1;
+  }
+
+  if (!display_->showBitmap(confirmBitmapStorage_, pageBytes, fullRefresh)) {
+    return false;
+  }
+
+  confirm_ = nextConfirm;
+  markDisplayState(DisplaySource::Bitmap, 0);
   return true;
 }
 
@@ -173,6 +238,10 @@ bool NekoPaw::resolveConfirm(ConfirmState state) {
   confirm_.state = state;
   confirm_.respondedAtSeconds = nowSeconds();
   confirm_.responseTimeMs = millis() - confirm_.startedAtMillis;
+  if (confirm_.renderMode == ConfirmRenderMode::Bitmap) {
+    (void)showConfirmBitmapState(state, true);
+    markDisplayState(DisplaySource::Bitmap, 0);
+  }
   return true;
 }
 
@@ -201,6 +270,41 @@ void NekoPaw::tickConfirm() {
   }
 
   (void)resolveConfirm(ConfirmState::Timeout);
+}
+
+bool NekoPaw::ensureConfirmBitmapStorage(size_t pageBytes) {
+  if (pageBytes == 0) {
+    return false;
+  }
+
+  const size_t requiredBytes = pageBytes * kConfirmBitmapStateCount;
+  if (confirmBitmapStorage_ != nullptr && confirmBitmapStorageCapacity_ >= requiredBytes) {
+    return true;
+  }
+
+  uint8_t* nextStorage = new (std::nothrow) uint8_t[requiredBytes];
+  if (nextStorage == nullptr) {
+    return false;
+  }
+
+  delete[] confirmBitmapStorage_;
+  confirmBitmapStorage_ = nextStorage;
+  confirmBitmapStorageCapacity_ = requiredBytes;
+  return true;
+}
+
+bool NekoPaw::showConfirmBitmapState(ConfirmState state, bool fullRefresh) {
+  if (display_ == nullptr || confirmBitmapStorage_ == nullptr || confirm_.bitmapPageBytes == 0) {
+    return false;
+  }
+
+  if (state != ConfirmState::Pending && state != ConfirmState::Confirmed && state != ConfirmState::Cancelled &&
+      state != ConfirmState::Timeout) {
+    return false;
+  }
+
+  const size_t offset = confirmBitmapOffset(state, confirm_.bitmapPageBytes);
+  return display_->showBitmap(confirmBitmapStorage_ + offset, confirm_.bitmapPageBytes, fullRefresh);
 }
 
 bool NekoPaw::begin() {

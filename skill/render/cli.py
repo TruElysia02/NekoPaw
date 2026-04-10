@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .pipeline import (
+    COMPOSITION_SINGLE_LAYER_IMAGE,
     DEFAULT_DITHER,
     DEFAULT_FIT,
     DEFAULT_HEIGHT,
@@ -22,6 +23,7 @@ from .pipeline import (
     convert_image_to_bitmap,
     render_markdown_to_artifacts,
     render_scene_to_artifacts,
+    resolve_render_profile,
 )
 
 
@@ -171,9 +173,11 @@ def cmd_scene(args: argparse.Namespace) -> int:
 
 
 def cmd_bitmap(args: argparse.Namespace) -> int:
+    settings = _settings_from_args(args)
+    profile = resolve_render_profile(settings)
     artifact = convert_image_to_bitmap(
         args.input,
-        _settings_from_args(args),
+        settings,
         bitmap_path=args.output,
         bw_preview_path=args.bw_preview,
     )
@@ -187,6 +191,8 @@ def cmd_bitmap(args: argparse.Namespace) -> int:
         "threshold": args.threshold,
         "dither": args.dither,
         "fit": args.fit,
+        "profile": profile.name,
+        "composition": COMPOSITION_SINGLE_LAYER_IMAGE,
     }
     if args.bw_preview:
         data["bwPreviewPath"] = str(Path(args.bw_preview))
@@ -196,6 +202,7 @@ def cmd_bitmap(args: argparse.Namespace) -> int:
 
 def cmd_confirm_assets(args: argparse.Namespace) -> int:
     settings = _settings_from_args(args)
+    profile = resolve_render_profile(settings)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -228,6 +235,8 @@ def cmd_confirm_assets(args: argparse.Namespace) -> int:
     payload = {
         "inputType": "confirm",
         "outputDir": str(output_dir),
+        "profile": profile.name,
+        "composition": profile.composition,
         "states": generated,
     }
     _print_json(_success_payload(payload))

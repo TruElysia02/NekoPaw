@@ -68,6 +68,50 @@ bool parseRequiredQueryArg(WebServer& server, const char* name, String& value, S
   return true;
 }
 
+String normalizedArgValue(const String& value) {
+  String normalized = value;
+  normalized.trim();
+  normalized.toLowerCase();
+  return normalized;
+}
+
+bool isConfirmBitmapPackRequest(WebServer& server) {
+  if (!server.hasArg("format")) {
+    return false;
+  }
+
+  return normalizedArgValue(server.arg("format")) == "bitmap-pack";
+}
+
+bool parseOptionalPositiveUint32Arg(WebServer& server, const char* name, uint32_t& outValue, String& errorMessage) {
+  if (name == nullptr || name[0] == '\0' || !server.hasArg(name)) {
+    outValue = 0;
+    return true;
+  }
+
+  String normalized = server.arg(name);
+  normalized.trim();
+  if (normalized.length() == 0) {
+    outValue = 0;
+    return true;
+  }
+
+  char* end = nullptr;
+  const unsigned long parsed = strtoul(normalized.c_str(), &end, 10);
+  if (end == nullptr || *end != '\0') {
+    errorMessage = String(name) + " must be an integer";
+    return false;
+  }
+
+  if (parsed == 0) {
+    errorMessage = String(name) + " must be >= 1";
+    return false;
+  }
+
+  outValue = static_cast<uint32_t>(parsed);
+  return true;
+}
+
 } // namespace
 
 CommandDispatcher::CommandDispatcher(NekoPaw& paw) : paw_(paw) {}
@@ -242,6 +286,65 @@ void CommandDispatcher::handleDisplayBitmapRaw(WebServer& server) {
   bitmapLength_ += raw.currentSize;
 }
 
+void CommandDispatcher::handleDisplayConfirmCreateRaw(WebServer& server) {
+  HTTPRaw& raw = server.raw();
+  if (raw.status == RAW_START) {
+    confirmBitmapLength_ = 0;
+    confirmBitmapOverflow_ = false;
+    confirmBitmapUnavailable_ = false;
+    confirmBitmapCaptureActive_ = false;
+
+    if (!isConfirmBitmapPackRequest(server) || paw_.hasPendingConfirm()) {
+      return;
+    }
+
+    const size_t expectedBytes = expectedBitmapBytes();
+    const size_t expectedPackBytes = expectedBytes * NekoPaw::kConfirmBitmapStateCount;
+    if (expectedBytes == 0 || expectedPackBytes > core::kConfirmBitmapPackBufferLimit) {
+      confirmBitmapUnavailable_ = true;
+      confirmBitmapCaptureActive_ = true;
+      return;
+    }
+
+    if (!paw_.ensureConfirmBitmapStorage(expectedBytes)) {
+      confirmBitmapUnavailable_ = true;
+      confirmBitmapCaptureActive_ = true;
+      return;
+    }
+
+    confirmBitmapCaptureActive_ = true;
+    return;
+  }
+
+  if (!confirmBitmapCaptureActive_) {
+    return;
+  }
+
+  if (raw.status == RAW_ABORTED) {
+    confirmBitmapOverflow_ = true;
+    return;
+  }
+
+  if (raw.status != RAW_WRITE) {
+    return;
+  }
+
+  if (confirmBitmapUnavailable_ || confirmBitmapOverflow_ || paw_.confirmBitmapStorage_ == nullptr) {
+    confirmBitmapOverflow_ = true;
+    return;
+  }
+
+  const size_t expectedBytes = expectedBitmapBytes();
+  const size_t expectedPackBytes = expectedBytes * NekoPaw::kConfirmBitmapStateCount;
+  if (confirmBitmapLength_ + raw.currentSize > expectedPackBytes) {
+    confirmBitmapOverflow_ = true;
+    return;
+  }
+
+  memcpy(paw_.confirmBitmapStorage_ + confirmBitmapLength_, raw.buf, raw.currentSize);
+  confirmBitmapLength_ += raw.currentSize;
+}
+
 int CommandDispatcher::handleDisplayBitmap(WebServer& server) {
   if (paw_.display_ == nullptr) {
     return sendDisplayUnavailable(server);
@@ -335,8 +438,46 @@ int CommandDispatcher::handleDisplayConfirmCreate(WebServer& server) {
                            "a confirm request is already pending");
   }
 
-  ArduinoJson::JsonDocument doc;
+  const String format = server.hasArg("format") ? normalizedArgValue(server.arg("format")) : "";
+  if (format.length() > 0 && format != "bitmap-pack") {
+    return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS",
+                           "format must be 'bitmap-pack'");
+  }
+
   String errorMessage;
+  if (format == "bitmap-pack") {
+    uint32_t timeoutSeconds = kDefaultConfirmTimeoutSeconds;
+    if (!parseOptionalPositiveUint32Arg(server, "timeout", timeoutSeconds, errorMessage)) {
+      return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
+    }
+    if (timeoutSeconds == 0) {
+      timeoutSeconds = kDefaultConfirmTimeoutSeconds;
+    }
+
+    const size_t expectedBytes = expectedBitmapBytes();
+    const size_t expectedPackBytes = expectedBytes * NekoPaw::kConfirmBitmapStateCount;
+    if (confirmBitmapUnavailable_) {
+      return core::sendError(server, 503, paw_.deviceIdBuffer_, paw_.nowSeconds(), "DISPLAY_UNAVAILABLE",
+                             "display rejected confirm bitmap pack");
+    }
+    if (confirmBitmapOverflow_ || confirmBitmapLength_ != expectedPackBytes) {
+      return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "BITMAP_SIZE_MISMATCH",
+                             String("expected ") + expectedPackBytes + " bytes, got " + confirmBitmapLength_);
+    }
+
+    if (!paw_.startConfirmBitmap(timeoutSeconds, false)) {
+      return core::sendError(server, 500, paw_.deviceIdBuffer_, paw_.nowSeconds(), "DISPLAY_UNAVAILABLE",
+                             "display rejected confirm bitmap pack");
+    }
+
+    return core::sendOk(server, paw_.deviceIdBuffer_, paw_.confirm_.startedAtSeconds,
+                        [&](ArduinoJson::JsonObject data) {
+                          data["requestId"] = paw_.confirm_.requestId;
+                          data["status"] = paw_.confirmStateLabel();
+                        });
+  }
+
+  ArduinoJson::JsonDocument doc;
   if (!core::parseJsonBody(server, doc, errorMessage)) {
     return core::sendError(server, 400, paw_.deviceIdBuffer_, paw_.nowSeconds(), "INVALID_PARAMS", errorMessage);
   }

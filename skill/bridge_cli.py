@@ -19,6 +19,7 @@ LED_COLORS = ("red", "green", "blue", "yellow", "cyan", "magenta", "white", "off
 INPUT_TRIGGERS = ("click", "double_click", "long_press", "release")
 SENSOR_OPERATORS = ("gt", "lt", "gte", "lte", "eq", "change")
 DEFAULT_REQUEST_TIMEOUT = 10.0
+CONFIRM_BITMAP_STATES = ("pending", "confirmed", "cancelled", "timeout")
 
 
 class LocalCliError(Exception):
@@ -146,6 +147,10 @@ def _read_bytes(path_text: str) -> bytes:
         raise LocalCliError("FILE_READ_FAILED", f"failed to read {path}", {"reason": str(exc)}) from exc
 
 
+def _bitmap_byte_length(width: int, height: int) -> int:
+    return ((width + 7) // 8) * height
+
+
 def _parse_response_json(response: requests.Response) -> tuple[bool, Any]:
     text = response.text or ""
     if not text.strip():
@@ -270,6 +275,49 @@ def _device_display_dimensions(args: argparse.Namespace) -> tuple[int, int]:
     return width, height
 
 
+def _load_confirm_bitmap_pack(args: argparse.Namespace) -> bytes:
+    if args.title is not None or args.body is not None or args.confirm_label is not None or args.cancel_label is not None:
+        raise LocalCliError(
+            "INVALID_ARGUMENT",
+            "--assets-dir cannot be combined with text confirm fields",
+            {
+                "forbidden": ["title", "body", "confirmLabel", "cancelLabel"],
+            },
+        )
+    if args.style is not None:
+        raise LocalCliError(
+            "INVALID_ARGUMENT",
+            "--assets-dir cannot be combined with --style",
+            {"forbidden": ["style"]},
+        )
+
+    assets_dir = Path(args.assets_dir)
+    width, height = _device_display_dimensions(args)
+    expected_bytes = _bitmap_byte_length(width, height)
+    pack_parts: list[bytes] = []
+
+    for state_name in CONFIRM_BITMAP_STATES:
+        path = assets_dir / f"{state_name}.bin"
+        data = _read_bytes(str(path))
+        if len(data) != expected_bytes:
+            raise LocalCliError(
+                "BITMAP_SIZE_MISMATCH",
+                f"{state_name} bitmap size does not match display {width}x{height}",
+                {
+                    "path": str(path),
+                    "state": state_name,
+                    "expectedBytes": expected_bytes,
+                    "actualBytes": len(data),
+                    "width": width,
+                    "height": height,
+                },
+            )
+
+        pack_parts.append(data)
+
+    return b"".join(pack_parts)
+
+
 def _expect_confirm_status(response: Any) -> str:
     if not isinstance(response, dict):
         raise LocalCliError("INVALID_RESPONSE", "confirm response must be a JSON object")
@@ -321,7 +369,7 @@ def cmd_display_text(args: argparse.Namespace) -> int:
 def cmd_display_bitmap(args: argparse.Namespace) -> int:
     data = _read_bytes(args.input)
     width, height = _device_display_dimensions(args)
-    expected_bytes = ((width + 7) // 8) * height
+    expected_bytes = _bitmap_byte_length(width, height)
     if len(data) != expected_bytes:
         raise LocalCliError(
             "BITMAP_SIZE_MISMATCH",
@@ -348,6 +396,24 @@ def cmd_display_state(args: argparse.Namespace) -> int:
 
 
 def cmd_display_confirm_create(args: argparse.Namespace) -> int:
+    if args.assets_dir is not None:
+        data = _load_confirm_bitmap_pack(args)
+        params = _merge_params(
+            _maybe_device_params(args.device),
+            {"format": "bitmap-pack"},
+            {"timeout": str(args.timeout)} if args.timeout is not None else None,
+        )
+        return _request_and_print(
+            args,
+            "POST",
+            "/api/bridge/display/confirm",
+            params=params,
+            data=data,
+        )
+
+    if args.body is None:
+        raise LocalCliError("INVALID_ARGUMENT", "body is required unless --assets-dir is used")
+
     payload = {
         "title": args.title,
         "body": _read_text_argument(args.body, "body"),
@@ -554,11 +620,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser_confirm_create = sub_confirm.add_parser("create", help="POST /api/bridge/display/confirm")
     parser_confirm_create.add_argument("--title", default=None)
-    parser_confirm_create.add_argument("--body", required=True, help="Confirm body, or '-' to read stdin")
+    parser_confirm_create.add_argument("--body", default=None, help="Confirm body, or '-' to read stdin")
+    parser_confirm_create.add_argument("--assets-dir", default=None, help="Directory with pending/confirmed/cancelled/timeout bitmap files")
     parser_confirm_create.add_argument("--confirm-label", default=None)
     parser_confirm_create.add_argument("--cancel-label", default=None)
     parser_confirm_create.add_argument("--timeout", type=_positive_int, default=None)
-    parser_confirm_create.add_argument("--style", default="default", choices=DISPLAY_STYLES)
+    parser_confirm_create.add_argument("--style", default=None, choices=DISPLAY_STYLES)
     parser_confirm_create.set_defaults(func=cmd_display_confirm_create)
 
     parser_confirm_get = sub_confirm.add_parser("get", help="GET /api/bridge/display/confirm?id=...")

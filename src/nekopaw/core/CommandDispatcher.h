@@ -18,6 +18,7 @@ public:
   void handleDisplayBitmapRaw(WebServer& server);
   int handleDisplayBitmap(WebServer& server);
   int handleDisplayState(WebServer& server);
+  void handleDisplayConfirmCreateRaw(WebServer& server);
   int handleDisplayConfirmCreate(WebServer& server);
   int handleDisplayConfirmGet(WebServer& server);
   int handleDisplayConfirmDelete(WebServer& server);
@@ -35,6 +36,10 @@ private:
   size_t bitmapBufferCapacity_ = 0;
   size_t bitmapLength_ = 0;
   bool bitmapOverflow_ = false;
+  size_t confirmBitmapLength_ = 0;
+  bool confirmBitmapOverflow_ = false;
+  bool confirmBitmapUnavailable_ = false;
+  bool confirmBitmapCaptureActive_ = false;
 
   size_t expectedBitmapBytes() const;
   int sendDisplayUnavailable(WebServer& server);

@@ -88,6 +88,111 @@ class BridgeCliTests(unittest.TestCase):
         self.assertTrue(all(call[1].endswith("/api/bridge/display/confirm") for call in calls))
         self.assertTrue(all(call[2]["params"]["id"] == "cfm_123" for call in calls))
 
+    def test_display_confirm_create_with_assets_dir_uploads_bitmap_pack(self):
+        calls = []
+
+        def fake_request(method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            if method == "GET":
+                return FakeResponse(
+                    200,
+                    {
+                        "ok": True,
+                        "data": {
+                            "capabilities": {
+                                "display": {"width": 9, "height": 2},
+                            }
+                        },
+                    },
+                )
+
+            return FakeResponse(200, {"ok": True, "data": {"requestId": "cfm_456", "status": "pending"}})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            assets_dir = Path(tmpdir)
+            payload_parts = {
+                "pending": b"\x00\x01\x02\x03",
+                "confirmed": b"\x04\x05\x06\x07",
+                "cancelled": b"\x08\x09\x0A\x0B",
+                "timeout": b"\x0C\x0D\x0E\x0F",
+            }
+            for name, data in payload_parts.items():
+                (assets_dir / f"{name}.bin").write_bytes(data)
+
+            code, payload, _ = self.run_cli(
+                ["display", "confirm", "create", "--assets-dir", str(assets_dir), "--timeout", "15"],
+                request_side_effect=fake_request,
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["data"]["status"], "pending")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0], "GET")
+        self.assertTrue(calls[0][1].endswith("/api/bridge/device"))
+        self.assertEqual(calls[1][0], "POST")
+        self.assertTrue(calls[1][1].endswith("/api/bridge/display/confirm"))
+        self.assertEqual(calls[1][2]["params"]["format"], "bitmap-pack")
+        self.assertEqual(calls[1][2]["params"]["timeout"], "15")
+        self.assertEqual(calls[1][2]["headers"]["Content-Type"], "application/octet-stream")
+        self.assertEqual(calls[1][2]["data"], b"".join(payload_parts.values()))
+
+    def test_display_confirm_create_with_assets_dir_rejects_text_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code, payload, _ = self.run_cli(
+                ["display", "confirm", "create", "--assets-dir", tmpdir, "--body", "Hello"],
+                request_side_effect=AssertionError("request should not be sent"),
+            )
+
+        self.assertEqual(code, 2)
+        self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENT")
+        self.assertIn("--assets-dir", payload["error"]["message"])
+
+    def test_display_confirm_create_with_assets_dir_rejects_size_mismatch(self):
+        calls = []
+
+        def fake_request(method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            return FakeResponse(
+                200,
+                {
+                    "ok": True,
+                    "data": {
+                        "capabilities": {
+                            "display": {"width": 9, "height": 2},
+                        }
+                    },
+                },
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            assets_dir = Path(tmpdir)
+            for name in ("pending", "confirmed", "cancelled", "timeout"):
+                size = 3 if name == "pending" else 4
+                (assets_dir / f"{name}.bin").write_bytes(b"\x00" * size)
+
+            code, payload, _ = self.run_cli(
+                ["display", "confirm", "create", "--assets-dir", str(assets_dir)],
+                request_side_effect=fake_request,
+            )
+
+        self.assertEqual(code, 2)
+        self.assertEqual(payload["error"]["code"], "BITMAP_SIZE_MISMATCH")
+        self.assertEqual(payload["error"]["details"]["state"], "pending")
+        self.assertEqual(payload["error"]["details"]["expectedBytes"], 4)
+        self.assertEqual(payload["error"]["details"]["actualBytes"], 3)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], "GET")
+
+    def test_display_confirm_create_requires_body_without_assets_dir(self):
+        code, payload, _ = self.run_cli(
+            ["display", "confirm", "create"],
+            request_side_effect=AssertionError("request should not be sent"),
+        )
+
+        self.assertEqual(code, 2)
+        self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENT")
+        self.assertIn("body is required", payload["error"]["message"])
+
     def test_events_watch_sensor_builds_expected_payload(self):
         calls = []
 
