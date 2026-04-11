@@ -15,6 +15,7 @@ pio run
 
 - Device-side phases through the current `bridge_cli.py` flow are complete as of 2026-03-25.
 - The separate `render skill` is now in the repository and can render `Markdown` or `scene json` into preview PNGs and device-ready `1bpp bitmap` files.
+- `scene json v2` docs and ready-to-render examples now live in `docs/SCENE_JSON.md` and `skill/render/examples/`.
 - Live planning now stays in GitHub Issues instead of duplicated local TODO checklists.
 - Current epic: `#1` https://github.com/TruElysia02/NekoPaw/issues/1
 - Current priority path: `#9` low-res clarity optimization, then `#5` confirm bitmap state wiring.

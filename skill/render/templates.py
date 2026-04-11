@@ -251,8 +251,7 @@ def _document_shell(
         filter: grayscale(1) contrast(1.05);
       }}
 
-      .md-figure-frame::after,
-      .scene-frame-overlay {{
+      .md-figure-frame::after {{
         content: "";
         position: absolute;
         inset: 0;
@@ -275,6 +274,19 @@ def _document_shell(
         display: flex;
         padding: 4px;
         white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }}
+
+      .scene-block--image {{
+        margin: 0;
+      }}
+
+      .scene-block--image-frame {{
+        position: absolute;
+        inset: 0;
+        border: var(--frame-stroke) solid var(--line);
+        pointer-events: none;
+        background: transparent;
       }}
 
       .scene-block--image img {{

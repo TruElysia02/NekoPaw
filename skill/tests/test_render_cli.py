@@ -187,6 +187,119 @@ class RenderCliTests(unittest.TestCase):
         confirmed_texts = [block["text"] for block in scenes["confirmed"]["blocks"] if block["type"] == "text"]
         self.assertEqual(confirmed_texts, ["confirmed", "Smart Home", "Confirmed"])
 
+    def test_scene_to_html_preserves_input_order_for_same_z(self):
+        scene = {
+            "blocks": [
+                {"type": "text", "x": 0, "y": 0, "w": 40, "h": 16, "text": "First", "z": 2},
+                {"type": "text", "x": 0, "y": 20, "w": 40, "h": 16, "text": "Second", "z": 2},
+            ]
+        }
+
+        html = pipeline.scene_to_html(scene)
+
+        self.assertLess(html.index("First"), html.index("Second"))
+        self.assertEqual(html.count("z-index:1002"), 2)
+
+    def test_scene_to_html_keeps_text_above_image_layer(self):
+        scene = {
+            "blocks": [
+                {"type": "image", "x": 0, "y": 0, "w": 80, "h": 80, "src": "https://example.com/cover.png", "z": 99},
+                {"type": "text", "x": 8, "y": 8, "w": 60, "h": 20, "text": "Overlay", "z": 0},
+            ]
+        }
+
+        html = pipeline.scene_to_html(scene)
+
+        self.assertIn('style="left:0px;top:0px;width:80px;height:80px;z-index:99;"', html)
+        self.assertIn('style="left:8px;top:8px;width:60px;height:20px;z-index:1000;"', html)
+
+    def test_scene_to_html_applies_image_anchor(self):
+        scene = {
+            "blocks": [
+                {
+                    "type": "image",
+                    "x": 0,
+                    "y": 0,
+                    "w": 100,
+                    "h": 60,
+                    "src": "https://example.com/cover.png",
+                    "fit": "contain",
+                    "anchor": "bottom-right",
+                }
+            ]
+        }
+
+        html = pipeline.scene_to_html(scene)
+
+        self.assertIn("object-fit:contain;object-position:right bottom;", html)
+
+    def test_scene_to_html_keeps_image_frame_in_foreground_layer(self):
+        scene = {
+            "blocks": [
+                {
+                    "type": "image",
+                    "x": 4,
+                    "y": 6,
+                    "w": 100,
+                    "h": 60,
+                    "src": "https://example.com/cover.png",
+                    "frame": True,
+                    "z": 2,
+                }
+            ]
+        }
+
+        html = pipeline.scene_to_html(scene)
+
+        self.assertIn('class="scene-block scene-block--image"', html)
+        self.assertIn('class="scene-block scene-block--image-frame" data-np-layer="foreground"', html)
+        self.assertIn("z-index:1002;", html)
+
+    def test_scene_to_html_rejects_invalid_anchor(self):
+        scene = {
+            "blocks": [
+                {
+                    "type": "image",
+                    "x": 0,
+                    "y": 0,
+                    "w": 100,
+                    "h": 60,
+                    "src": "https://example.com/cover.png",
+                    "anchor": "upper-left",
+                }
+            ]
+        }
+
+        with self.assertRaises(pipeline.RenderPipelineError) as ctx:
+            pipeline.scene_to_html(scene)
+
+        self.assertEqual(ctx.exception.code, "INVALID_JSON")
+        self.assertEqual(ctx.exception.message, "image block anchor is invalid")
+
+    def test_scene_to_html_rejects_negative_z(self):
+        scene = {
+            "blocks": [
+                {"type": "text", "x": 0, "y": 0, "w": 40, "h": 16, "text": "Hi", "z": -1},
+            ]
+        }
+
+        with self.assertRaises(pipeline.RenderPipelineError) as ctx:
+            pipeline.scene_to_html(scene)
+
+        self.assertEqual(ctx.exception.code, "INVALID_JSON")
+        self.assertEqual(ctx.exception.message, "scene block z must be >= 0")
+
+    def test_example_scenes_resolve_local_assets(self):
+        examples_dir = SKILL_DIR / "render" / "examples"
+
+        for name in ("scene_news_card.json", "scene_poster_card.json"):
+            scene_path = examples_dir / name
+            scene = json.loads(scene_path.read_text(encoding="utf-8"))
+
+            html = pipeline.scene_to_html(scene, scene_path.parent.resolve())
+
+            self.assertIn("data:image/svg+xml;base64,", html)
+
     def test_reduce_oversampled_binary_keeps_any_black_subpixel(self):
         values = [
             255, 255, 255, 255,

@@ -29,6 +29,31 @@ VALID_DITHER = ("none", "floyd-steinberg")
 VALID_TEXT_ROLES = ("title", "subtitle", "body", "caption", "badge")
 VALID_ALIGN = ("left", "center", "right")
 VALID_VALIGN = ("top", "middle", "bottom")
+VALID_SCENE_IMAGE_FIT = ("contain", "cover", "fill")
+VALID_IMAGE_ANCHOR = (
+    "top-left",
+    "top",
+    "top-right",
+    "left",
+    "center",
+    "right",
+    "bottom-left",
+    "bottom",
+    "bottom-right",
+)
+IMAGE_ANCHOR_POSITIONS = {
+    "top-left": "left top",
+    "top": "center top",
+    "top-right": "right top",
+    "left": "left center",
+    "center": "center center",
+    "right": "right center",
+    "bottom-left": "left bottom",
+    "bottom": "center bottom",
+    "bottom-right": "right bottom",
+}
+SCENE_IMAGE_Z_BASE = 0
+SCENE_FOREGROUND_Z_BASE = 1000
 
 _IMG_SRC_RE = re.compile(r"(<img\b[^>]*\bsrc=)(['\"])([^'\"]+)(\2)", re.IGNORECASE)
 
@@ -275,6 +300,25 @@ def _coerce_scene(scene: dict[str, Any]) -> list[dict[str, Any]]:
     return coerced
 
 
+def _coerce_scene_nonnegative_int(value: Any, field: str, index: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise RenderPipelineError(
+            "INVALID_JSON",
+            f"scene block {field} must be an integer",
+            {"index": index, field: value},
+        ) from exc
+
+    if parsed < 0:
+        raise RenderPipelineError(
+            "INVALID_JSON",
+            f"scene block {field} must be >= 0",
+            {"index": index, field: parsed},
+        )
+    return parsed
+
+
 def _scene_text_block(block: dict[str, Any], index: int) -> str:
     text = block.get("text")
     if not isinstance(text, str) or text == "":
@@ -302,7 +346,7 @@ def _scene_text_block(block: dict[str, Any], index: int) -> str:
     if block.get("invert"):
         classes.append("scene-invert")
 
-    style = _scene_position_style(block, index)
+    style = _scene_position_style(block, index, z_base=SCENE_FOREGROUND_Z_BASE)
     return f'<div class="{" ".join(classes)}" data-np-layer="foreground" style="{style}">{escape(text)}</div>'
 
 
@@ -324,20 +368,28 @@ def _scene_image_block(block: dict[str, Any], index: int, base_dir: Path | None)
         src_value = src
 
     fit = block.get("fit", "cover")
-    if fit not in ("cover", "contain", "fill"):
+    if fit not in VALID_SCENE_IMAGE_FIT:
         raise RenderPipelineError("INVALID_JSON", "image block fit is invalid", {"index": index, "fit": fit})
+    anchor = block.get("anchor", "center")
+    if anchor not in VALID_IMAGE_ANCHOR:
+        raise RenderPipelineError("INVALID_JSON", "image block anchor is invalid", {"index": index, "anchor": anchor})
 
-    image_style = f"object-fit:{fit};"
-    frame_overlay = '<span class="scene-frame-overlay" data-np-layer="foreground"></span>' if block.get("frame") else ""
-    return (
-        f'<figure class="scene-block scene-block--image" data-np-layer="image" style="{_scene_position_style(block, index)}">'
-        f'<img alt="{escape(str(block.get("alt", "")))}" src="{src_value}" style="{image_style}">'
-        f"{frame_overlay}"
-        "</figure>"
-    )
+    image_style = f"object-fit:{fit};object-position:{IMAGE_ANCHOR_POSITIONS[anchor]};"
+    image_block_style = _scene_position_style(block, index, z_base=SCENE_IMAGE_Z_BASE)
+    parts = [
+        f'<figure class="scene-block scene-block--image" data-np-layer="image" style="{image_block_style}">',
+        f'<img alt="{escape(str(block.get("alt", "")))}" src="{src_value}" style="{image_style}">',
+        "</figure>",
+    ]
+    if block.get("frame"):
+        frame_style = _scene_position_style(block, index, z_base=SCENE_FOREGROUND_Z_BASE)
+        parts.append(
+            f'<span class="scene-block scene-block--image-frame" data-np-layer="foreground" style="{frame_style}"></span>'
+        )
+    return "".join(parts)
 
 
-def _scene_position_style(block: dict[str, Any], index: int) -> str:
+def _scene_position_style(block: dict[str, Any], index: int, *, z_base: int) -> str:
     try:
         x = int(block["x"])
         y = int(block["y"])
@@ -355,14 +407,17 @@ def _scene_position_style(block: dict[str, Any], index: int) -> str:
             {"index": index, "width": width, "height": height},
         )
 
+    z_value = _coerce_scene_nonnegative_int(block.get("z", 0), "z", index)
     style_parts = [
         f"left:{x}px",
         f"top:{y}px",
         f"width:{width}px",
         f"height:{height}px",
+        f"z-index:{z_base + z_value}",
     ]
     if "padding" in block:
-        style_parts.append(f"padding:{int(block['padding'])}px")
+        padding = _coerce_scene_nonnegative_int(block["padding"], "padding", index)
+        style_parts.append(f"padding:{padding}px")
     return ";".join(style_parts) + ";"
 
 

@@ -1,0 +1,70 @@
+{
+  "blocks": [
+    {
+      "type": "image",
+      "x": 116,
+      "y": 0,
+      "w": 180,
+      "h": 128,
+      "src": "assets/poster_moon.svg",
+      "fit": "cover",
+      "anchor": "bottom-right"
+    },
+    {
+      "type": "text",
+      "x": 12,
+      "y": 12,
+      "w": 96,
+      "h": 12,
+      "text": "signal notes",
+      "role": "caption"
+    },
+    {
+      "type": "text",
+      "x": 12,
+      "y": 30,
+      "w": 112,
+      "h": 40,
+      "text": "Moonlit Relay",
+      "role": "title",
+      "z": 2
+    },
+    {
+      "type": "text",
+      "x": 12,
+      "y": 76,
+      "w": 110,
+      "h": 28,
+      "text": "Poster-style scene with image bleed, layered copy, and compact status chips.",
+      "role": "body",
+      "z": 2
+    },
+    {
+      "type": "text",
+      "x": 136,
+      "y": 16,
+      "w": 142,
+      "h": 18,
+      "text": "limited print",
+      "role": "badge",
+      "align": "center",
+      "valign": "middle",
+      "frame": true,
+      "invert": true,
+      "z": 3
+    },
+    {
+      "type": "text",
+      "x": 134,
+      "y": 96,
+      "w": 144,
+      "h": 18,
+      "text": "dock hall 21:10",
+      "role": "subtitle",
+      "align": "center",
+      "valign": "middle",
+      "frame": true,
+      "z": 3
+    }
+  ]
+}

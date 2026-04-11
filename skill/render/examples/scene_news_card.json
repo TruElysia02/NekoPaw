@@ -1,0 +1,67 @@
+{
+  "blocks": [
+    {
+      "type": "text",
+      "x": 12,
+      "y": 12,
+      "w": 148,
+      "h": 12,
+      "text": "daily brief",
+      "role": "caption"
+    },
+    {
+      "type": "text",
+      "x": 12,
+      "y": 26,
+      "w": 148,
+      "h": 28,
+      "text": "Harbor line slows after dusk",
+      "role": "title",
+      "z": 1
+    },
+    {
+      "type": "text",
+      "x": 12,
+      "y": 58,
+      "w": 148,
+      "h": 36,
+      "text": "Rain pushes more commuters toward the east pier. Trains still run, but ferry queues are longer than usual.",
+      "role": "body"
+    },
+    {
+      "type": "text",
+      "x": 12,
+      "y": 98,
+      "w": 86,
+      "h": 16,
+      "text": "city watch",
+      "role": "badge",
+      "align": "center",
+      "valign": "middle",
+      "frame": true,
+      "z": 2
+    },
+    {
+      "type": "image",
+      "x": 174,
+      "y": 14,
+      "w": 108,
+      "h": 76,
+      "src": "assets/news_harbor.svg",
+      "fit": "cover",
+      "anchor": "right",
+      "frame": true
+    },
+    {
+      "type": "text",
+      "x": 176,
+      "y": 96,
+      "w": 104,
+      "h": 16,
+      "text": "06:40 update",
+      "role": "caption",
+      "align": "right",
+      "z": 1
+    }
+  ]
+}

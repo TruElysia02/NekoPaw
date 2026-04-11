@@ -16,7 +16,8 @@ __pycache__/
 *.pyc
 
 # Local docs (kept private)
-docs/
+docs/*
+!docs/SCENE_JSON.md
 
 # Local agent instructions (keep private)
 AGENTS.md
