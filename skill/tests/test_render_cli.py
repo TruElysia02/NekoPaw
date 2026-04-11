@@ -151,7 +151,7 @@ class RenderCliTests(unittest.TestCase):
                     "width": 296,
                     "height": 128,
                     "profile": "epd_296x128_bw",
-                    "composition": "layered-foreground-overlay",
+                    "composition": "layered-direct-text-overlay",
                     "sceneKeys": sorted(scene.keys()),
                 },
             ) as mocked_render:
@@ -169,7 +169,7 @@ class RenderCliTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(payload["data"]["profile"], "epd_296x128_bw")
-        self.assertEqual(payload["data"]["composition"], "layered-foreground-overlay")
+        self.assertEqual(payload["data"]["composition"], "layered-direct-text-overlay")
         self.assertEqual(sorted(payload["data"]["states"].keys()), ["cancelled", "confirmed", "pending", "timeout"])
         self.assertEqual(mocked_render.call_count, 4)
 
@@ -187,6 +187,54 @@ class RenderCliTests(unittest.TestCase):
         confirmed_texts = [block["text"] for block in scenes["confirmed"]["blocks"] if block["type"] == "text"]
         self.assertEqual(confirmed_texts, ["confirmed", "Smart Home", "Confirmed"])
 
+    def test_build_confirm_scenes_pending_buttons_use_safer_low_res_height(self):
+        scenes = pipeline.build_confirm_scenes(
+            title="Smart Home",
+            body="Turn on the fan?",
+            confirm_label="Confirm (BTN1)",
+            cancel_label="Cancel (BTN2)",
+            confirmed_text="Confirmed",
+            cancelled_text="Cancelled",
+            timeout_text="Timed out",
+        )
+
+        button_blocks = [
+            block
+            for block in scenes["pending"]["blocks"]
+            if block["type"] == "text" and block.get("role") == "badge"
+        ]
+        self.assertEqual([block["h"] for block in button_blocks], [18, 18])
+
+    def test_scene_to_html_pending_confirm_buttons_fall_back_to_outline(self):
+        scenes = pipeline.build_confirm_scenes(
+            title="Smart Home",
+            body="Turn on the fan?",
+            confirm_label="Confirm (BTN1)",
+            cancel_label="Cancel (BTN2)",
+            confirmed_text="Confirmed",
+            cancelled_text="Cancelled",
+            timeout_text="Timed out",
+        )
+
+        html = pipeline.scene_to_html(scenes["pending"])
+
+        self.assertNotIn("scene-invert", html)
+
+    def test_scene_to_html_confirmed_feedback_badge_keeps_invert_when_tall_enough(self):
+        scenes = pipeline.build_confirm_scenes(
+            title="Smart Home",
+            body="Turn on the fan?",
+            confirm_label="Confirm (BTN1)",
+            cancel_label="Cancel (BTN2)",
+            confirmed_text="Confirmed",
+            cancelled_text="Cancelled",
+            timeout_text="Timed out",
+        )
+
+        html = pipeline.scene_to_html(scenes["confirmed"])
+
+        self.assertIn("scene-invert", html)
+
     def test_scene_to_html_preserves_input_order_for_same_z(self):
         scene = {
             "blocks": [
@@ -199,6 +247,7 @@ class RenderCliTests(unittest.TestCase):
 
         self.assertLess(html.index("First"), html.index("Second"))
         self.assertEqual(html.count("z-index:1002"), 2)
+        self.assertEqual(html.count('class="scene-block__copy"'), 2)
 
     def test_scene_to_html_keeps_text_above_image_layer(self):
         scene = {
@@ -233,7 +282,7 @@ class RenderCliTests(unittest.TestCase):
 
         self.assertIn("object-fit:contain;object-position:right bottom;", html)
 
-    def test_scene_to_html_keeps_image_frame_in_foreground_layer(self):
+    def test_scene_to_html_keeps_image_frame_in_decoration_layer(self):
         scene = {
             "blocks": [
                 {
@@ -252,8 +301,78 @@ class RenderCliTests(unittest.TestCase):
         html = pipeline.scene_to_html(scene)
 
         self.assertIn('class="scene-block scene-block--image"', html)
-        self.assertIn('class="scene-block scene-block--image-frame" data-np-layer="foreground"', html)
+        self.assertIn('class="scene-block scene-block--image-frame" data-np-layer="decoration"', html)
         self.assertIn("z-index:1002;", html)
+
+    def test_scene_to_html_disables_small_invert_badge_on_low_res(self):
+        scene = {
+            "blocks": [
+                {
+                    "type": "text",
+                    "x": 12,
+                    "y": 96,
+                    "w": 80,
+                    "h": 16,
+                    "text": "tiny badge",
+                    "role": "badge",
+                    "invert": True,
+                    "frame": True,
+                }
+            ]
+        }
+
+        html = pipeline.scene_to_html(scene)
+
+        self.assertIn("scene-single-line", html)
+        self.assertNotIn("scene-invert", html)
+
+    def test_scene_to_html_marks_low_res_title_as_two_line_clamp(self):
+        scene = {
+            "blocks": [
+                {
+                    "type": "text",
+                    "x": 12,
+                    "y": 20,
+                    "w": 120,
+                    "h": 28,
+                    "text": "Long title",
+                    "role": "title",
+                }
+            ]
+        }
+
+        html = pipeline.scene_to_html(scene)
+
+        self.assertIn("scene-max-lines-2", html)
+
+    def test_scene_font_candidates_use_latin_defaults_for_ascii_low_res_text(self):
+        candidates = pipeline._scene_font_candidates(
+            False,
+            text="Signal report 42",
+            settings=pipeline.RenderSettings(),
+        )
+
+        self.assertEqual(candidates[0].lower(), "c:\\windows\\fonts\\verdana.ttf")
+        self.assertNotIn("C:\\Windows\\Fonts\\msyh.ttc", candidates)
+
+    def test_scene_font_candidates_use_cjk_defaults_for_non_ascii_low_res_text(self):
+        candidates = pipeline._scene_font_candidates(
+            True,
+            text="猫 paw",
+            settings=pipeline.RenderSettings(),
+        )
+
+        self.assertEqual(candidates[0].lower(), "c:\\windows\\fonts\\msyhbd.ttc")
+
+    def test_scene_font_candidates_prefer_env_override(self):
+        with mock.patch.dict("os.environ", {"NEKOPAW_RENDER_FONT_REGULAR": "E:/fonts/custom.ttf"}):
+            candidates = pipeline._scene_font_candidates(
+                False,
+                text="Signal report 42",
+                settings=pipeline.RenderSettings(),
+            )
+
+        self.assertEqual(candidates, ["E:/fonts/custom.ttf"])
 
     def test_scene_to_html_rejects_invalid_anchor(self):
         scene = {
@@ -326,7 +445,67 @@ class RenderCliTests(unittest.TestCase):
 
         self.assertEqual(composed, [255, 0, 0, 0])
 
-    def test_render_scene_to_artifacts_uses_layered_profile_for_296x128(self):
+    def test_overlay_white_pixels_force_white_where_requested(self):
+        composed = pipeline.overlay_white_pixels(
+            [0, 0, 255, 255],
+            [255, 0, 255, 0],
+        )
+
+        self.assertEqual(composed, [0, 255, 255, 255])
+
+    def test_compose_scene_text_blocks_respects_z_when_white_text_overlaps_black_text(self):
+        scene = pipeline.normalize_scene(
+            {
+                "blocks": [
+                    {"type": "text", "x": 0, "y": 0, "w": 1, "h": 1, "text": "low", "z": 0},
+                    {"type": "text", "x": 0, "y": 0, "w": 1, "h": 1, "text": "high", "z": 1},
+                ]
+            },
+            settings=pipeline.RenderSettings(),
+        )
+
+        def fake_layers(block, settings, *, text_threshold):
+            if block.text == "low":
+                return pipeline.DirectTextLayers(black_values=[255], white_values=[0], width=1, height=1)
+            return pipeline.DirectTextLayers(black_values=[0], white_values=[255], width=1, height=1)
+
+        with mock.patch.object(pipeline, "_render_text_block_layers", side_effect=fake_layers):
+            composed = pipeline._compose_scene_text_blocks(
+                [0],
+                scene,
+                pipeline.RenderSettings(),
+                text_threshold=160,
+            )
+
+        self.assertEqual(composed, [0])
+
+    def test_compose_scene_text_blocks_preserves_input_order_for_same_z(self):
+        scene = pipeline.normalize_scene(
+            {
+                "blocks": [
+                    {"type": "text", "x": 0, "y": 0, "w": 1, "h": 1, "text": "first", "z": 0},
+                    {"type": "text", "x": 0, "y": 0, "w": 1, "h": 1, "text": "second", "z": 0},
+                ]
+            },
+            settings=pipeline.RenderSettings(),
+        )
+
+        def fake_layers(block, settings, *, text_threshold):
+            if block.text == "first":
+                return pipeline.DirectTextLayers(black_values=[255], white_values=[0], width=1, height=1)
+            return pipeline.DirectTextLayers(black_values=[0], white_values=[255], width=1, height=1)
+
+        with mock.patch.object(pipeline, "_render_text_block_layers", side_effect=fake_layers):
+            composed = pipeline._compose_scene_text_blocks(
+                [0],
+                scene,
+                pipeline.RenderSettings(),
+                text_threshold=160,
+            )
+
+        self.assertEqual(composed, [0])
+
+    def test_render_scene_to_artifacts_uses_direct_text_profile_for_296x128(self):
         scene = {"blocks": [{"type": "text", "x": 0, "y": 0, "w": 20, "h": 12, "text": "Hi"}]}
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -337,13 +516,14 @@ class RenderCliTests(unittest.TestCase):
                 mock.patch.object(
                     pipeline,
                     "render_html_capture_set",
-                    return_value=((1184, 512), {"image": b"image", "foreground": b"foreground"}),
+                    return_value=((1184, 512), {"image": b"image", "decoration": b"decoration"}),
                 ) as mocked_capture,
                 mock.patch.object(
                     pipeline,
-                    "convert_layer_captures_to_bitmap",
+                    "convert_scene_captures_to_bitmap",
                     return_value=FakeBitmapArtifact(width=296, height=128, bitmap_byte_count=4736),
-                ) as mocked_layered,
+                ) as mocked_direct,
+                mock.patch.object(pipeline, "convert_layer_captures_to_bitmap") as mocked_layered,
                 mock.patch.object(pipeline, "convert_image_to_bitmap") as mocked_single,
             ):
                 result = pipeline.render_scene_to_artifacts(
@@ -354,11 +534,13 @@ class RenderCliTests(unittest.TestCase):
                 )
 
         self.assertEqual(result["profile"], "epd_296x128_bw")
-        self.assertEqual(result["composition"], "layered-foreground-overlay")
+        self.assertEqual(result["composition"], "layered-direct-text-overlay")
         self.assertEqual(result["bitmapBytes"], 4736)
         self.assertEqual(mocked_capture.call_count, 1)
-        self.assertEqual(mocked_layered.call_count, 1)
+        self.assertEqual(mocked_direct.call_count, 1)
+        self.assertEqual(mocked_layered.call_count, 0)
         self.assertEqual(mocked_single.call_count, 0)
+        self.assertEqual(mocked_direct.call_args.kwargs["text_threshold"], 160)
 
     def test_render_scene_to_artifacts_falls_back_to_single_layer_for_other_size(self):
         scene = {"blocks": [{"type": "text", "x": 0, "y": 0, "w": 20, "h": 12, "text": "Hi"}]}

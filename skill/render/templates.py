@@ -273,8 +273,26 @@ def _document_shell(
       .scene-block--text {{
         display: flex;
         padding: 4px;
+      }}
+
+      .scene-block__copy {{
+        display: block;
+        width: 100%;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
+      }}
+
+      .scene-single-line .scene-block__copy {{
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }}
+
+      .scene-max-lines-2 .scene-block__copy {{
+        display: -webkit-box;
+        overflow: hidden;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
       }}
 
       .scene-block--image {{
@@ -380,7 +398,23 @@ def _document_shell(
         visibility: hidden !important;
       }}
 
+      body[data-np-capture="image"] [data-np-layer="decoration"] {{
+        visibility: hidden !important;
+      }}
+
       body[data-np-capture="foreground"] [data-np-layer="image"] {{
+        visibility: hidden !important;
+      }}
+
+      body[data-np-capture="foreground"] [data-np-layer="decoration"] {{
+        visibility: hidden !important;
+      }}
+
+      body[data-np-capture="decoration"] [data-np-layer="image"] {{
+        visibility: hidden !important;
+      }}
+
+      body[data-np-capture="decoration"] [data-np-layer="foreground"] {{
         visibility: hidden !important;
       }}
 

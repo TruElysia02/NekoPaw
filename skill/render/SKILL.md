@@ -43,6 +43,9 @@ Notes:
 - `markdown` supports regular text flow and the first image block as a figure sidebar.
 - `scene` is the free-layout path for absolute-positioned text and image blocks.
 - `scene` now supports stable `z` stacking within each visual layer, plus image `anchor` placement for `cover` / `contain` / `fill`.
+- On the current `296x128` low-res black-and-white target, `scene` text blocks now render into the final bitmap on the target pixel grid instead of only relying on browser text downscaling.
+- On that same low-res target, text blocks are rasterized in their own block canvas before being composited back, so block clipping, centering, and invert badges stay more stable than the old whole-page white overlay path.
+- The low-res text path still accepts `NEKOPAW_RENDER_FONT_REGULAR` and `NEKOPAW_RENDER_FONT_BOLD` as font overrides; without them, ASCII-heavy blocks prefer `Verdana` / `Tahoma`, while blocks with Chinese or other non-ASCII text prefer `Microsoft YaHei` / `Yu Gothic`.
 - See `docs/SCENE_JSON.md` for the current scene schema and `skill/render/examples/` for ready-to-render examples.
 - `confirm-assets` emits `pending` / `confirmed` / `cancelled` / `timeout` preview and bitmap files together.
 - Those `confirm-assets` outputs can be sent to the device with `python skill/bridge_cli.py display confirm create --assets-dir out/confirm`.

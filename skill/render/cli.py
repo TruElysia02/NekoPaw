@@ -236,7 +236,7 @@ def cmd_confirm_assets(args: argparse.Namespace) -> int:
         "inputType": "confirm",
         "outputDir": str(output_dir),
         "profile": profile.name,
-        "composition": profile.composition,
+        "composition": generated["pending"]["composition"] if generated else profile.composition,
         "states": generated,
     }
     _print_json(_success_payload(payload))
