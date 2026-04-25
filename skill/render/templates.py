@@ -275,11 +275,26 @@ def _document_shell(
         padding: 4px;
       }}
 
+      .scene-block--flow-text {{
+        display: block;
+      }}
+
       .scene-block__copy {{
         display: block;
         width: 100%;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
+      }}
+
+      .scene-block--flow-text .scene-block__copy {{
+        position: relative;
+        width: 100%;
+        height: 100%;
+      }}
+
+      .scene-flow-line {{
+        position: absolute;
+        white-space: pre;
       }}
 
       .scene-single-line .scene-block__copy {{

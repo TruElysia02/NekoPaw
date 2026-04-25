@@ -1,0 +1,43 @@
+{
+  "blocks": [
+    {
+      "type": "image",
+      "id": "pet",
+      "x": 194,
+      "y": 18,
+      "w": 86,
+      "h": 96,
+      "src": "assets/pet_avatar.svg",
+      "fit": "contain",
+      "anchor": "bottom",
+      "wrap": true,
+      "wrapPadding": 4
+    },
+    {
+      "type": "flowText",
+      "id": "speech",
+      "x": 10,
+      "y": 10,
+      "w": 276,
+      "h": 108,
+      "text": "今天的状态还不错。右侧是桌宠形象，文本会自动避让它，不需要 AI 手动拆成很多小文字块。",
+      "role": "body",
+      "avoid": "auto",
+      "overflow": "error",
+      "wrapPadding": 4
+    },
+    {
+      "type": "text",
+      "x": 12,
+      "y": 102,
+      "w": 78,
+      "h": 16,
+      "text": "NekoPaw",
+      "role": "badge",
+      "frame": true,
+      "align": "center",
+      "valign": "middle",
+      "z": 2
+    }
+  ]
+}

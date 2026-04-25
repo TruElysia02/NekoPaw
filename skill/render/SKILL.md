@@ -1,6 +1,6 @@
 ---
 name: nekopaw-render
-description: Render Markdown or scene JSON into NekoPaw preview PNG and 1bpp bitmap artifacts.
+description: Render NekoPaw display assets from Markdown or scene JSON into preview PNG, black-and-white previews, raw 1bpp bitmaps, and confirm-flow bitmap packs. Use when Codex needs display-ready assets, scene layout rendering, low-resolution e-paper output, flowText/pretext text layout, image placement, or confirm bitmap generation before sending artifacts through the bridge skill.
 ---
 
 # NekoPaw Render
@@ -11,6 +11,7 @@ Environment and setup:
 
 - Install runtime packages with `pip install -r skill/render/requirements.txt`
 - Install the browser binary with `python -m playwright install chromium`
+- Install `flowText` / `pretext` JavaScript dependencies with `npm install`
 
 Agent workflow:
 
@@ -30,6 +31,8 @@ python skill/render_cli.py scene --input skill/render/examples/scene_news_card.j
 
 python skill/render_cli.py scene --input skill/render/examples/scene_poster_card.json --preview out/poster_card.png --bitmap out/poster_card.bin
 
+python skill/render_cli.py scene --input skill/render/examples/scene_pet_companion.json --preview out/pet_companion.png --bitmap out/pet_companion.bin --bw-preview out/pet_companion_bw.png
+
 python skill/render_cli.py bitmap --input out/scene.png --output out/scene.bin --dither floyd-steinberg
 
 python skill/render_cli.py confirm-assets \
@@ -42,6 +45,7 @@ Notes:
 
 - `markdown` supports regular text flow and the first image block as a figure sidebar.
 - `scene` is the free-layout path for absolute-positioned text and image blocks.
+- `scene` supports `flowText` for boxed key text that uses `pretext`, avoids wrapping image rectangles, and reports overflow through `layoutReport`.
 - `scene` now supports stable `z` stacking within each visual layer, plus image `anchor` placement for `cover` / `contain` / `fill`.
 - On the current `296x128` low-res black-and-white target, `scene` text blocks now render into the final bitmap on the target pixel grid instead of only relying on browser text downscaling.
 - On that same low-res target, text blocks are rasterized in their own block canvas before being composited back, so block clipping, centering, and invert badges stay more stable than the old whole-page white overlay path.

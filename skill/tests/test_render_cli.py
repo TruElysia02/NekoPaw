@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import replace
 import importlib
 import io
 import json
@@ -66,6 +67,16 @@ class RenderCliTests(unittest.TestCase):
 
         packed = pipeline.pack_bitmap_bytes(values, width=9, height=2)
         self.assertEqual(packed, bytes([0x80, 0x80, 0x40, 0x00]))
+
+    def test_pretext_bridge_reports_missing_dependency(self):
+        from render import pretext_bridge
+
+        with mock.patch.object(pretext_bridge, "_pretext_package_root", return_value=None):
+            with self.assertRaises(pipeline.RenderPipelineError) as ctx:
+                pretext_bridge.layout_flow_text_blocks([], width=296, height=128)
+
+        self.assertEqual(ctx.exception.code, "PRETEXT_DEPENDENCY_MISSING")
+        self.assertIn("npm install", ctx.exception.details["install"])
 
     def test_markdown_command_passes_expected_paths(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -374,6 +385,287 @@ class RenderCliTests(unittest.TestCase):
 
         self.assertEqual(candidates, ["E:/fonts/custom.ttf"])
 
+    def test_normalize_scene_accepts_flow_text_and_wrapping_image(self):
+        scene = pipeline.normalize_scene(
+            {
+                "blocks": [
+                    {
+                        "type": "image",
+                        "id": "pet",
+                        "x": 200,
+                        "y": 18,
+                        "w": 72,
+                        "h": 92,
+                        "src": "https://example.test/pet.png",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "flowText",
+                        "id": "copy",
+                        "x": 8,
+                        "y": 8,
+                        "w": 280,
+                        "h": 112,
+                        "text": "hello world",
+                        "avoid": "auto",
+                    },
+                ]
+            },
+            settings=pipeline.RenderSettings(),
+        )
+
+        self.assertEqual(scene.text_blocks[0].block_type, "flowText")
+        self.assertEqual(scene.text_blocks[0].overflow, "error")
+        self.assertEqual(scene.image_blocks[0].block_id, "pet")
+        self.assertTrue(scene.image_blocks[0].wrap)
+
+    def test_flow_text_rejects_invalid_overflow_mode(self):
+        with self.assertRaises(pipeline.RenderPipelineError) as ctx:
+            pipeline.normalize_scene(
+                {
+                    "blocks": [
+                        {
+                            "type": "flowText",
+                            "x": 0,
+                            "y": 0,
+                            "w": 100,
+                            "h": 30,
+                            "text": "x",
+                            "overflow": "hide",
+                        }
+                    ]
+                },
+                settings=pipeline.RenderSettings(),
+            )
+
+        self.assertEqual(ctx.exception.code, "INVALID_JSON")
+
+    def test_apply_scene_flow_text_layouts_uses_pretext_reports_and_lines(self):
+        from render import pretext_bridge
+
+        scene = pipeline.normalize_scene(
+            {
+                "blocks": [
+                    {
+                        "type": "image",
+                        "id": "pet",
+                        "x": 200,
+                        "y": 18,
+                        "w": 72,
+                        "h": 92,
+                        "src": "https://example.test/pet.png",
+                        "wrap": True,
+                    },
+                    {
+                        "type": "flowText",
+                        "id": "copy",
+                        "x": 8,
+                        "y": 8,
+                        "w": 280,
+                        "h": 112,
+                        "text": "hello world",
+                        "avoid": "auto",
+                    },
+                ]
+            },
+            settings=pipeline.RenderSettings(),
+        )
+        fake_report = {
+            "blockIndex": 1,
+            "blockId": "copy",
+            "usedPretext": True,
+            "overflow": False,
+            "shownLineCount": 1,
+            "totalLineCount": 1,
+            "neededHeight": 12,
+            "contentHeight": 104,
+            "avoidCount": 1,
+            "lines": [{"text": "hello world", "width": 60, "x": 0, "y": 0}],
+        }
+
+        with mock.patch.object(pretext_bridge, "layout_flow_text_blocks", return_value=[fake_report]) as mocked_layout:
+            laid_out = pipeline.apply_scene_flow_text_layouts(scene, pipeline.RenderSettings())
+
+        self.assertEqual(mocked_layout.call_count, 1)
+        layout_input = mocked_layout.call_args.args[0][0]
+        self.assertEqual(layout_input.block_index, 1)
+        self.assertEqual(len(layout_input.avoid_rects), 1)
+        self.assertEqual(laid_out.text_blocks[0].flow_lines[0].text, "hello world")
+        self.assertEqual(laid_out.text_blocks[0].flow_lines[0].x, 0)
+        self.assertEqual(laid_out.text_blocks[0].flow_lines[0].y, 0)
+        self.assertNotIn("lines", laid_out.text_blocks[0].layout_report)
+        self.assertTrue(laid_out.text_blocks[0].layout_report["usedPretext"])
+
+    def test_apply_scene_flow_text_layouts_raises_text_overflow_for_error_mode(self):
+        from render import pretext_bridge
+
+        scene = pipeline.normalize_scene(
+            {
+                "blocks": [
+                    {
+                        "type": "flowText",
+                        "id": "copy",
+                        "x": 8,
+                        "y": 8,
+                        "w": 120,
+                        "h": 18,
+                        "text": "hello world",
+                        "overflow": "error",
+                    }
+                ]
+            },
+            settings=pipeline.RenderSettings(),
+        )
+        fake_report = {
+            "blockIndex": 0,
+            "blockId": "copy",
+            "usedPretext": True,
+            "overflow": True,
+            "shownLineCount": 1,
+            "totalLineCount": 3,
+            "neededHeight": 36,
+            "contentHeight": 10,
+            "avoidCount": 0,
+            "lines": [{"text": "hello", "width": 28, "x": 0, "y": 0}],
+        }
+
+        with mock.patch.object(pretext_bridge, "layout_flow_text_blocks", return_value=[fake_report]):
+            with self.assertRaises(pipeline.RenderPipelineError) as ctx:
+                pipeline.apply_scene_flow_text_layouts(scene, pipeline.RenderSettings())
+
+        self.assertEqual(ctx.exception.code, "TEXT_OVERFLOW")
+        self.assertEqual(ctx.exception.details["blocks"][0]["blockId"], "copy")
+        self.assertEqual(ctx.exception.details["blocks"][0]["neededHeight"], 36)
+
+    def test_normalized_flow_text_block_to_html_emits_materialized_lines(self):
+        scene = pipeline.normalize_scene(
+            {
+                "blocks": [
+                    {
+                        "type": "flowText",
+                        "x": 8,
+                        "y": 8,
+                        "w": 120,
+                        "h": 40,
+                        "text": "hello world",
+                    }
+                ]
+            },
+            settings=pipeline.RenderSettings(),
+        )
+        block = replace(
+            scene.text_blocks[0],
+            flow_lines=(
+                pipeline.SceneTextLine(
+                    text="hello",
+                    width=24,
+                    bbox_left=0,
+                    bbox_top=0,
+                    bbox_right=24,
+                    bbox_bottom=10,
+                    x=3,
+                    y=5,
+                ),
+            ),
+        )
+
+        html = pipeline._normalized_text_block_to_html(block)
+
+        self.assertIn("scene-block--flow-text", html)
+        self.assertIn("scene-flow-line", html)
+        self.assertIn("left:3px;top:5px;", html)
+
+    def test_layout_text_block_returns_precomputed_flow_lines(self):
+        from PIL import Image, ImageDraw, ImageFont
+
+        scene = pipeline.normalize_scene(
+            {
+                "blocks": [
+                    {
+                        "type": "flowText",
+                        "x": 0,
+                        "y": 0,
+                        "w": 120,
+                        "h": 40,
+                        "text": "this would normally wrap",
+                    }
+                ]
+            },
+            settings=pipeline.RenderSettings(),
+        )
+        block = replace(
+            scene.text_blocks[0],
+            flow_lines=(
+                pipeline.SceneTextLine(
+                    text="fixed line",
+                    width=40,
+                    bbox_left=0,
+                    bbox_top=0,
+                    bbox_right=40,
+                    bbox_bottom=10,
+                    x=2,
+                    y=4,
+                ),
+            ),
+        )
+        draw = ImageDraw.Draw(Image.new("L", (1, 1), 255))
+
+        layout = pipeline._layout_text_block(draw, ImageFont, block, pipeline.RenderSettings())
+
+        self.assertEqual([line.text for line in layout.lines], ["fixed line"])
+        self.assertEqual(layout.lines[0].x, 2)
+        self.assertEqual(layout.lines[0].y, 4)
+
+    def test_draw_text_layout_honors_materialized_line_offsets(self):
+        block = pipeline.NormalizedSceneTextBlock(
+            index=0,
+            box=pipeline.SceneBlockBox(x=0, y=0, w=80, h=40, z=0, padding=0, padding_explicit=False),
+            text="hello",
+            role="body",
+            align="right",
+            valign="bottom",
+            frame=False,
+            invert=False,
+            role_spec=pipeline.SceneTextRoleSpec(font_size=10, line_height_ratio=1.0, bold=False),
+            block_type="flowText",
+        )
+        layout = pipeline.SceneTextLayout(
+            block=block,
+            lines=(
+                pipeline.SceneTextLine(
+                    text="hello",
+                    width=28,
+                    bbox_left=2,
+                    bbox_top=3,
+                    bbox_right=30,
+                    bbox_bottom=12,
+                    x=7,
+                    y=9,
+                ),
+            ),
+            line_height=10,
+            content_x=11,
+            content_y=13,
+            content_width=40,
+            content_height=20,
+        )
+        draw_calls = []
+
+        class FakeDraw:
+            def text(self, xy, text, *, font, fill):
+                draw_calls.append((xy, text, font, fill))
+
+        with mock.patch.object(pipeline, "_load_scene_font", return_value="font"):
+            pipeline._draw_text_layout(
+                FakeDraw(),
+                mock.Mock(),
+                layout,
+                pipeline.RenderSettings(),
+                white_text=False,
+            )
+
+        self.assertEqual(draw_calls, [((16, 19), "hello", "font", 0)])
+
     def test_scene_to_html_rejects_invalid_anchor(self):
         scene = {
             "blocks": [
@@ -411,7 +703,7 @@ class RenderCliTests(unittest.TestCase):
     def test_example_scenes_resolve_local_assets(self):
         examples_dir = SKILL_DIR / "render" / "examples"
 
-        for name in ("scene_news_card.json", "scene_poster_card.json"):
+        for name in ("scene_news_card.json", "scene_poster_card.json", "scene_pet_companion.json"):
             scene_path = examples_dir / name
             scene = json.loads(scene_path.read_text(encoding="utf-8"))
 
@@ -541,6 +833,55 @@ class RenderCliTests(unittest.TestCase):
         self.assertEqual(mocked_layered.call_count, 0)
         self.assertEqual(mocked_single.call_count, 0)
         self.assertEqual(mocked_direct.call_args.kwargs["text_threshold"], 160)
+
+    def test_render_scene_to_artifacts_includes_flow_text_layout_report(self):
+        from render import pretext_bridge
+
+        scene = {
+            "blocks": [
+                {
+                    "type": "flowText",
+                    "id": "copy",
+                    "x": 0,
+                    "y": 0,
+                    "w": 120,
+                    "h": 40,
+                    "text": "hello world",
+                }
+            ]
+        }
+        fake_report = {
+            "blockIndex": 0,
+            "blockId": "copy",
+            "usedPretext": True,
+            "overflow": False,
+            "shownLineCount": 1,
+            "totalLineCount": 1,
+            "neededHeight": 12,
+            "contentHeight": 32,
+            "avoidCount": 0,
+            "lines": [{"text": "hello world", "width": 60, "x": 0, "y": 0}],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            preview_path = Path(tmpdir) / "scene.png"
+            with (
+                mock.patch.object(pretext_bridge, "layout_flow_text_blocks", return_value=[fake_report]),
+                mock.patch.object(
+                    pipeline,
+                    "render_html_capture_set",
+                    return_value=((1184, 512), {}),
+                ),
+            ):
+                result = pipeline.render_scene_to_artifacts(
+                    scene,
+                    preview_path=preview_path,
+                    settings=pipeline.RenderSettings(),
+                )
+
+        self.assertIn("layoutReport", result)
+        self.assertEqual(result["layoutReport"]["blocks"][0]["blockId"], "copy")
+        self.assertTrue(result["layoutReport"]["blocks"][0]["usedPretext"])
 
     def test_render_scene_to_artifacts_falls_back_to_single_layer_for_other_size(self):
         scene = {"blocks": [{"type": "text", "x": 0, "y": 0, "w": 20, "h": 12, "text": "Hi"}]}

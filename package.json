@@ -1,0 +1,13 @@
+{
+  "name": "nekopaw-render-tools",
+  "private": true,
+  "type": "module",
+  "description": "Local render-time JavaScript dependencies for NekoPaw.",
+  "scripts": {
+    "render:deps": "npm install",
+    "test:python": "python -m unittest discover -s skill/tests -p \"test_*.py\""
+  },
+  "dependencies": {
+    "@chenglou/pretext": "^0.0.6"
+  }
+}

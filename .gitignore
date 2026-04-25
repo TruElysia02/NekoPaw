@@ -15,9 +15,14 @@ platformio_override.ini
 __pycache__/
 *.pyc
 
+# Node / render outputs
+node_modules/
+out/
+
 # Local docs (kept private)
 docs/*
 !docs/SCENE_JSON.md
 
 # Local agent instructions (keep private)
 AGENTS.md
+.agents/

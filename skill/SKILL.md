@@ -1,6 +1,6 @@
 ---
 name: nekopaw
-description: Control a NekoPaw device via HTTP (/api/bridge/*) using skill/bridge_cli.py.
+description: Control a NekoPaw ESP32 device or gateway through the HTTP bridge API using skill/bridge_cli.py. Use when Codex needs to inspect device info, display text or raw 1bpp bitmaps, create or wait for confirm flows, read sensors, poll input events, manage event watches, or drive outputs such as LED and buzzer.
 ---
 
 # NekoPaw Control

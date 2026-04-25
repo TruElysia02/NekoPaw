@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import base64
 from io import BytesIO
 from html import escape
@@ -31,6 +31,8 @@ VALID_DITHER = ("none", "floyd-steinberg")
 VALID_TEXT_ROLES = ("title", "subtitle", "body", "caption", "badge")
 VALID_ALIGN = ("left", "center", "right")
 VALID_VALIGN = ("top", "middle", "bottom")
+VALID_FLOW_AVOID = ("auto", "none")
+VALID_FLOW_OVERFLOW = ("error", "ellipsis", "clip")
 VALID_SCENE_IMAGE_FIT = ("contain", "cover", "fill")
 VALID_IMAGE_ANCHOR = (
     "top-left",
@@ -58,6 +60,7 @@ SCENE_IMAGE_Z_BASE = 0
 SCENE_FOREGROUND_Z_BASE = 1000
 DEFAULT_TEXT_PADDING = 4
 DEFAULT_FRAME_STROKE = 2
+DEFAULT_FLOW_WRAP_PADDING = 4
 LOW_RES_TEXT_SAFE_INSET = 1
 LOW_RES_BADGE_MIN_HEIGHT = 20
 LOW_RES_TEXT_THRESHOLD = 160
@@ -140,6 +143,13 @@ class NormalizedSceneTextBlock:
     frame: bool
     invert: bool
     role_spec: SceneTextRoleSpec
+    block_type: str = "text"
+    block_id: str | None = None
+    avoid: str | tuple[str, ...] = "none"
+    overflow: str = "clip"
+    wrap_padding: int = 0
+    flow_lines: tuple["SceneTextLine", ...] = ()
+    layout_report: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +161,9 @@ class NormalizedSceneImageBlock:
     fit: str
     anchor: str
     frame: bool
+    block_id: str | None = None
+    wrap: bool = False
+    wrap_padding: int = DEFAULT_FLOW_WRAP_PADDING
 
 
 NormalizedSceneBlock = NormalizedSceneTextBlock | NormalizedSceneImageBlock
@@ -171,6 +184,8 @@ class SceneTextLine:
     bbox_top: int
     bbox_right: int
     bbox_bottom: int
+    x: int | None = None
+    y: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -527,6 +542,32 @@ def _coerce_scene_nonnegative_int(value: Any, field: str, index: int) -> int:
     return parsed
 
 
+def _coerce_optional_block_id(block: dict[str, Any], index: int) -> str | None:
+    block_id = block.get("id")
+    if block_id is None:
+        return None
+    if not isinstance(block_id, str) or block_id == "":
+        raise RenderPipelineError("INVALID_JSON", "scene block id must be a non-empty string", {"index": index})
+    return block_id
+
+
+def _coerce_flow_avoid(value: Any, index: int) -> str | tuple[str, ...]:
+    if value is None:
+        return "auto"
+    if isinstance(value, str):
+        if value not in VALID_FLOW_AVOID:
+            raise RenderPipelineError("INVALID_JSON", "flowText avoid is invalid", {"index": index, "avoid": value})
+        return value
+    if isinstance(value, list) and value:
+        ids: list[str] = []
+        for item in value:
+            if not isinstance(item, str) or item == "":
+                raise RenderPipelineError("INVALID_JSON", "flowText avoid ids must be non-empty strings", {"index": index})
+            ids.append(item)
+        return tuple(ids)
+    raise RenderPipelineError("INVALID_JSON", "flowText avoid must be auto, none, or image id array", {"index": index})
+
+
 def _scene_position_box(
     block: dict[str, Any],
     index: int,
@@ -592,6 +633,7 @@ def _normalize_scene_text_block(
     index: int,
     settings: RenderSettings,
 ) -> NormalizedSceneTextBlock:
+    block_type = str(block.get("type", "text"))
     text = block.get("text")
     if not isinstance(text, str) or text == "":
         raise RenderPipelineError("INVALID_JSON", "text block requires a non-empty text field", {"index": index})
@@ -610,6 +652,25 @@ def _normalize_scene_text_block(
     box = _scene_position_box(block, index, default_padding=DEFAULT_TEXT_PADDING)
     frame = bool(block.get("frame"))
     invert = bool(block.get("invert"))
+    block_id = _coerce_optional_block_id(block, index)
+    avoid: str | tuple[str, ...] = "none"
+    overflow = "clip"
+    wrap_padding = 0
+
+    if block_type == "flowText":
+        avoid = _coerce_flow_avoid(block.get("avoid"), index)
+        overflow = str(block.get("overflow", "error"))
+        if overflow not in VALID_FLOW_OVERFLOW:
+            raise RenderPipelineError(
+                "INVALID_JSON",
+                "flowText overflow is invalid",
+                {"index": index, "overflow": overflow},
+            )
+        wrap_padding = _coerce_scene_nonnegative_int(
+            block.get("wrapPadding", DEFAULT_FLOW_WRAP_PADDING),
+            "wrapPadding",
+            index,
+        )
 
     if _is_low_res_epd(settings) and role == "badge" and invert:
         safe_inset = LOW_RES_TEXT_SAFE_INSET * 2
@@ -631,6 +692,11 @@ def _normalize_scene_text_block(
         frame=frame,
         invert=invert,
         role_spec=role_spec,
+        block_type=block_type,
+        block_id=block_id,
+        avoid=avoid,
+        overflow=overflow,
+        wrap_padding=wrap_padding,
     )
 
 
@@ -670,6 +736,13 @@ def _normalize_scene_image_block(
         fit=fit,
         anchor=anchor,
         frame=bool(block.get("frame")),
+        block_id=_coerce_optional_block_id(block, index),
+        wrap=bool(block.get("wrap", False)),
+        wrap_padding=_coerce_scene_nonnegative_int(
+            block.get("wrapPadding", DEFAULT_FLOW_WRAP_PADDING),
+            "wrapPadding",
+            index,
+        ),
     )
 
 
@@ -686,7 +759,7 @@ def normalize_scene(
 
     for index, block in enumerate(_coerce_scene(scene)):
         block_type = block.get("type")
-        if block_type == "text":
+        if block_type in ("text", "flowText"):
             normalized_text = _normalize_scene_text_block(block, index, render_settings)
             blocks.append(normalized_text)
             text_blocks.append(normalized_text)
@@ -697,7 +770,7 @@ def normalize_scene(
         else:
             raise RenderPipelineError(
                 "INVALID_JSON",
-                "scene block type must be text or image",
+                "scene block type must be text, flowText, or image",
                 {"index": index, "type": block_type},
             )
 
@@ -729,19 +802,33 @@ def _normalized_text_block_to_html(block: NormalizedSceneTextBlock) -> str:
         f"scene-align-{block.align}",
         f"scene-valign-{block.valign}",
     ]
+    if block.block_type == "flowText":
+        classes.append("scene-block--flow-text")
     if block.frame:
         classes.append("scene-frame")
     if block.invert:
         classes.append("scene-invert")
-    if block.role_spec.single_line:
+    if block.block_type != "flowText" and block.role_spec.single_line:
         classes.append("scene-single-line")
-    elif block.role_spec.max_lines is not None:
+    elif block.block_type != "flowText" and block.role_spec.max_lines is not None:
         classes.append(f"scene-max-lines-{block.role_spec.max_lines}")
 
     style = _scene_position_style(block.box, z_base=SCENE_FOREGROUND_Z_BASE)
+    if block.block_type == "flowText" and block.flow_lines:
+        line_html = "".join(
+            (
+                '<span class="scene-flow-line" '
+                f'style="left:{line.x or 0}px;top:{line.y or 0}px;">'
+                f"{escape(line.text)}</span>"
+            )
+            for line in block.flow_lines
+        )
+        copy_html = f'<span class="scene-block__copy">{line_html}</span>'
+    else:
+        copy_html = f'<span class="scene-block__copy">{escape(block.text)}</span>'
     return (
         f'<div class="{" ".join(classes)}" data-np-layer="foreground" style="{style}">'
-        f'<span class="scene-block__copy">{escape(block.text)}</span>'
+        f"{copy_html}"
         "</div>"
     )
 
@@ -781,6 +868,153 @@ def scene_to_html(
     settings: RenderSettings | None = None,
 ) -> str:
     return normalized_scene_to_html(normalize_scene(scene, base_dir, settings=settings))
+
+
+def _flow_text_blocks(scene: NormalizedScene) -> list[NormalizedSceneTextBlock]:
+    return [block for block in scene.text_blocks if block.block_type == "flowText"]
+
+
+def _scene_text_content_box(
+    block: NormalizedSceneTextBlock,
+    settings: RenderSettings,
+) -> tuple[int, int, int, int]:
+    frame_padding = DEFAULT_FRAME_STROKE if block.frame else 0
+    safe_inset = 0 if block.block_type == "flowText" else (LOW_RES_TEXT_SAFE_INSET if _is_low_res_epd(settings) else 0)
+    content_x = block.box.padding + frame_padding + safe_inset
+    content_y = block.box.padding + frame_padding + safe_inset
+    content_width = max(1, block.box.w - (block.box.padding * 2) - (frame_padding * 2) - (safe_inset * 2))
+    content_height = max(1, block.box.h - (block.box.padding * 2) - (frame_padding * 2) - (safe_inset * 2))
+    return content_x, content_y, content_width, content_height
+
+
+def _image_wrap_rects_for_block(
+    block: NormalizedSceneTextBlock,
+    scene: NormalizedScene,
+) -> tuple[dict[str, Any], ...]:
+    if block.avoid == "none":
+        return ()
+
+    if block.avoid == "auto":
+        image_blocks = [image for image in scene.image_blocks if image.wrap]
+    else:
+        avoided_ids = set(block.avoid)
+        image_blocks = [image for image in scene.image_blocks if image.block_id in avoided_ids]
+
+    rects: list[dict[str, Any]] = []
+    for image in image_blocks:
+        padding = max(block.wrap_padding, image.wrap_padding)
+        rects.append(
+            {
+                "id": image.block_id,
+                "x": image.box.x - padding,
+                "y": image.box.y - padding,
+                "w": image.box.w + padding * 2,
+                "h": image.box.h + padding * 2,
+            }
+        )
+    return tuple(rects)
+
+
+def _scene_font_css(block: NormalizedSceneTextBlock, settings: RenderSettings) -> str:
+    weight = "700" if block.role_spec.bold else "400"
+    if _text_prefers_cjk_font(block.text):
+        family = '"Microsoft YaHei", "Yu Gothic", Arial, sans-serif'
+    else:
+        family = "Verdana, Tahoma, Arial, sans-serif"
+    return f"{weight} {block.role_spec.font_size}px {family}"
+
+
+def _scene_flow_line_from_report(line: dict[str, Any]) -> SceneTextLine:
+    return SceneTextLine(
+        text=str(line.get("text", "")),
+        width=max(0, int(line.get("width", 0))),
+        bbox_left=0,
+        bbox_top=0,
+        bbox_right=max(0, int(line.get("width", 0))),
+        bbox_bottom=0,
+        x=int(line["x"]) if line.get("x") is not None else None,
+        y=int(line["y"]) if line.get("y") is not None else None,
+    )
+
+
+def _report_without_lines(report: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in report.items() if key != "lines"}
+
+
+def apply_scene_flow_text_layouts(scene: NormalizedScene, settings: RenderSettings) -> NormalizedScene:
+    flow_blocks = _flow_text_blocks(scene)
+    if not flow_blocks:
+        return scene
+
+    from . import pretext_bridge
+
+    layout_inputs: list[pretext_bridge.FlowTextLayoutInput] = []
+    for block in flow_blocks:
+        content_x, content_y, content_width, content_height = _scene_text_content_box(block, settings)
+        line_height = max(1, int((block.role_spec.font_size * block.role_spec.line_height_ratio) + 0.9999))
+        layout_inputs.append(
+            pretext_bridge.FlowTextLayoutInput(
+                block_index=block.index,
+                block_id=block.block_id,
+                text=block.text,
+                font=_scene_font_css(block, settings),
+                line_height=line_height,
+                content_x=content_x,
+                content_y=content_y,
+                content_width=content_width,
+                content_height=content_height,
+                screen_x=block.box.x,
+                screen_y=block.box.y,
+                align=block.align,
+                overflow=block.overflow,
+                avoid_rects=_image_wrap_rects_for_block(block, scene),
+            )
+        )
+
+    reports = pretext_bridge.layout_flow_text_blocks(layout_inputs, width=settings.width, height=settings.height)
+    blocks_by_index = {block.index: block for block in flow_blocks}
+    error_reports: list[dict[str, Any]] = []
+    replacements: dict[int, NormalizedSceneTextBlock] = {}
+
+    for report in reports:
+        block_index = int(report["blockIndex"])
+        block = blocks_by_index[block_index]
+        sanitized_report = _report_without_lines(report)
+        if report.get("overflow") and block.overflow == "error":
+            error_reports.append(sanitized_report)
+            continue
+        flow_lines = tuple(_scene_flow_line_from_report(line) for line in report.get("lines", ()))
+        replacements[block_index] = replace(
+            block,
+            flow_lines=flow_lines,
+            layout_report=sanitized_report,
+        )
+
+    if error_reports:
+        raise RenderPipelineError(
+            "TEXT_OVERFLOW",
+            "flowText content does not fit inside its text box",
+            {"blocks": error_reports},
+        )
+
+    def replace_block(block: NormalizedSceneBlock) -> NormalizedSceneBlock:
+        if isinstance(block, NormalizedSceneTextBlock) and block.index in replacements:
+            return replacements[block.index]
+        return block
+
+    updated_blocks = tuple(replace_block(block) for block in scene.blocks)
+    updated_text_blocks = tuple(
+        replacements.get(block.index, block)
+        for block in scene.text_blocks
+    )
+    return replace(scene, blocks=updated_blocks, text_blocks=updated_text_blocks)
+
+
+def _scene_layout_report(scene: NormalizedScene) -> dict[str, Any] | None:
+    reports = [block.layout_report for block in scene.text_blocks if block.layout_report is not None]
+    if not reports:
+        return None
+    return {"blocks": reports}
 
 
 def _scene_block_sort_key(block: NormalizedSceneTextBlock | NormalizedSceneImageBlock) -> tuple[int, int]:
@@ -902,13 +1136,7 @@ def _layout_text_block(
     block: NormalizedSceneTextBlock,
     settings: RenderSettings,
 ) -> SceneTextLayout:
-    frame_padding = DEFAULT_FRAME_STROKE if block.frame else 0
-    safe_inset = LOW_RES_TEXT_SAFE_INSET if _is_low_res_epd(settings) else 0
-    content_x = block.box.padding + frame_padding + safe_inset
-    content_y = block.box.padding + frame_padding + safe_inset
-    content_width = max(1, block.box.w - (block.box.padding * 2) - (frame_padding * 2) - (safe_inset * 2))
-    content_height = max(1, block.box.h - (block.box.padding * 2) - (frame_padding * 2) - (safe_inset * 2))
-
+    content_x, content_y, content_width, content_height = _scene_text_content_box(block, settings)
     font = _load_scene_font(
         image_font_module,
         block.role_spec.font_size,
@@ -917,6 +1145,30 @@ def _layout_text_block(
         settings=settings,
     )
     line_height = _font_line_height(font, role_spec=block.role_spec)
+
+    if block.block_type == "flowText" and block.flow_lines:
+        line_items_list: list[SceneTextLine] = []
+        for line in block.flow_lines:
+            bbox_left, bbox_top, bbox_right, bbox_bottom = _text_bbox(draw, line.text, font)
+            line_items_list.append(
+                replace(
+                    line,
+                    width=max(0, line.width),
+                    bbox_left=bbox_left,
+                    bbox_top=bbox_top,
+                    bbox_right=bbox_right,
+                    bbox_bottom=bbox_bottom,
+                )
+            )
+        return SceneTextLayout(
+            block=block,
+            lines=tuple(line_items_list),
+            line_height=line_height,
+            content_x=content_x,
+            content_y=content_y,
+            content_width=content_width,
+            content_height=content_height,
+        )
 
     requested_lines = _wrap_scene_text(
         draw,
@@ -1017,6 +1269,11 @@ def _draw_text_layout(
     )
     y = layout.content_y
     for line in layout.lines:
+        if line.x is not None or line.y is not None:
+            x = layout.content_x + (line.x or 0) - line.bbox_left
+            draw_y = layout.content_y + (line.y or 0) - line.bbox_top
+            draw.text((x, draw_y), line.text, font=font, fill=0 if white_text else 0)
+            continue
         if layout.block.align == "center":
             x = layout.content_x + max(0, (layout.content_width - line.width) // 2) - line.bbox_left
         elif layout.block.align == "right":
@@ -1267,6 +1524,7 @@ def render_scene_preview(
     settings.validate()
     profile = resolve_render_profile(settings)
     normalized_scene = normalize_scene(scene, base_dir, settings=settings)
+    normalized_scene = apply_scene_flow_text_layouts(normalized_scene, settings)
     document = build_scene_document(
         title,
         normalized_scene_to_html(normalized_scene),
@@ -1694,6 +1952,8 @@ def render_scene_to_artifacts(
     profile = resolve_render_profile(settings)
     composition = _resolve_scene_composition(settings)
     normalized_scene = normalize_scene(scene, base_dir, settings=settings)
+    normalized_scene = apply_scene_flow_text_layouts(normalized_scene, settings)
+    layout_report = _scene_layout_report(normalized_scene)
     document = build_scene_document(
         "NekoPaw Scene Preview",
         normalized_scene_to_html(normalized_scene),
@@ -1702,7 +1962,7 @@ def render_scene_to_artifacts(
         theme=profile.css_vars,
     )
     if composition != COMPOSITION_LAYERED_DIRECT_TEXT:
-        return _render_document_to_artifacts(
+        result = _render_document_to_artifacts(
             document,
             preview_path=preview_path,
             settings=settings,
@@ -1711,6 +1971,9 @@ def render_scene_to_artifacts(
             bw_preview_path=bw_preview_path,
             composition=composition,
         )
+        if layout_report is not None:
+            result["layoutReport"] = layout_report
+        return result
 
     capture_modes: tuple[str, ...] = ()
     if bitmap_path is not None:
@@ -1729,6 +1992,8 @@ def render_scene_to_artifacts(
         "previewSize": {"width": preview_size[0], "height": preview_size[1]},
         **_artifact_metadata(preview_path, settings, profile, composition=composition),
     }
+    if layout_report is not None:
+        result["layoutReport"] = layout_report
 
     if bitmap_path is not None:
         bitmap_artifact = convert_scene_captures_to_bitmap(
