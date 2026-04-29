@@ -101,6 +101,16 @@ python skill/bridge_cli.py display confirm wait --id cfm_000001
 
 这些都走同一条链路：先生成预览图，再转成 `1bpp bitmap`（1 位图），最后通过桥接接口发到设备。
 
+## 实机效果图
+
+下面三张是 2.9 寸黑白墨水屏上的实机效果。页面方向使用项目自带的 `render skill`（渲染技能）和 `bridge skill`（桥接技能）完成，并参考 `Anthropic`（Anthropic）的 [`frontend-design`（前端设计技能）](https://github.com/anthropics/skills/tree/main/skills/frontend-design) 做视觉设计：先生成适合小屏的预览图，再转成 `1bpp bitmap`（1 位图）发送到设备。
+
+![确认决策页效果图](docs/assets/readme/ink-confirm.jpg)
+
+![外卖配送进度效果图](docs/assets/readme/ink-delivery.jpg)
+
+![纪念日倒计时效果图](docs/assets/readme/ink-birthday.jpg)
+
 ## 项目结构
 
 ```text

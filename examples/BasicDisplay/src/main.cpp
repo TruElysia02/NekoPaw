@@ -35,19 +35,38 @@ constexpr int kLedRedPin = 8;
 constexpr int kLedGreenPin = 9;
 constexpr int kLedBluePin = 13;
 constexpr int kBuzzerPin = 12;
-constexpr uint16_t kScreenWidth = 296;
-constexpr uint16_t kScreenHeight = 128;
 constexpr uint8_t kScreenRotation = 3;
 
 #if defined(NEKOPAW_EPD_DRIVER_GDEY029T94)
 #include <gdey/GxEPD2_290_GDEY029T94.h>
 using ExampleEpdDriver = GxEPD2_290_GDEY029T94;
+#elif defined(NEKOPAW_EPD_DRIVER_GDEY029T71H)
+#include <gdey/GxEPD2_290_GDEY029T71H.h>
+using ExampleEpdDriver = GxEPD2_290_GDEY029T71H;
 #elif defined(NEKOPAW_EPD_DRIVER_T94_V2)
 #include <epd/GxEPD2_290_T94_V2.h>
 using ExampleEpdDriver = GxEPD2_290_T94_V2;
 #elif defined(NEKOPAW_EPD_DRIVER_T94)
 #include <epd/GxEPD2_290_T94.h>
 using ExampleEpdDriver = GxEPD2_290_T94;
+#elif defined(NEKOPAW_EPD_DRIVER_290_BS)
+#include <epd/GxEPD2_290_BS.h>
+using ExampleEpdDriver = GxEPD2_290_BS;
+#elif defined(NEKOPAW_EPD_DRIVER_290_M06)
+#include <epd/GxEPD2_290_M06.h>
+using ExampleEpdDriver = GxEPD2_290_M06;
+#elif defined(NEKOPAW_EPD_DRIVER_290_I6FD)
+#include <epd/GxEPD2_290_I6FD.h>
+using ExampleEpdDriver = GxEPD2_290_I6FD;
+#elif defined(NEKOPAW_EPD_DRIVER_290_T5D)
+#include <epd/GxEPD2_290_T5D.h>
+using ExampleEpdDriver = GxEPD2_290_T5D;
+#elif defined(NEKOPAW_EPD_DRIVER_290_T5)
+#include <epd/GxEPD2_290_T5.h>
+using ExampleEpdDriver = GxEPD2_290_T5;
+#elif defined(NEKOPAW_EPD_DRIVER_290)
+#include <epd/GxEPD2_290.h>
+using ExampleEpdDriver = GxEPD2_290;
 #else
 #if __has_include(<gdey/GxEPD2_290_GDEY029T94.h>)
 #include <gdey/GxEPD2_290_GDEY029T94.h>
@@ -58,10 +77,38 @@ using ExampleEpdDriver = GxEPD2_290_T94_V2;
 #elif __has_include(<epd/GxEPD2_290_T94.h>)
 #include <epd/GxEPD2_290_T94.h>
 using ExampleEpdDriver = GxEPD2_290_T94;
+#elif __has_include(<epd/GxEPD2_290_BS.h>)
+#include <epd/GxEPD2_290_BS.h>
+using ExampleEpdDriver = GxEPD2_290_BS;
+#elif __has_include(<epd/GxEPD2_290_M06.h>)
+#include <epd/GxEPD2_290_M06.h>
+using ExampleEpdDriver = GxEPD2_290_M06;
+#elif __has_include(<epd/GxEPD2_290_I6FD.h>)
+#include <epd/GxEPD2_290_I6FD.h>
+using ExampleEpdDriver = GxEPD2_290_I6FD;
+#elif __has_include(<epd/GxEPD2_290_T5D.h>)
+#include <epd/GxEPD2_290_T5D.h>
+using ExampleEpdDriver = GxEPD2_290_T5D;
+#elif __has_include(<epd/GxEPD2_290_T5.h>)
+#include <epd/GxEPD2_290_T5.h>
+using ExampleEpdDriver = GxEPD2_290_T5;
+#elif __has_include(<epd/GxEPD2_290.h>)
+#include <epd/GxEPD2_290.h>
+using ExampleEpdDriver = GxEPD2_290;
+#elif __has_include(<gdey/GxEPD2_290_GDEY029T71H.h>)
+#include <gdey/GxEPD2_290_GDEY029T71H.h>
+using ExampleEpdDriver = GxEPD2_290_GDEY029T71H;
 #else
 #error "No supported 2.9-inch BW EPD driver header found for BasicDisplay."
 #endif
 #endif
+
+// The bridge reports dimensions after rotation, so bitmap uploads match the visible canvas.
+constexpr uint16_t kNativeScreenWidth = ExampleEpdDriver::WIDTH;
+constexpr uint16_t kNativeScreenHeight = ExampleEpdDriver::HEIGHT;
+constexpr bool kScreenRotated = (kScreenRotation % 2U) != 0U;
+constexpr uint16_t kScreenWidth = kScreenRotated ? kNativeScreenHeight : kNativeScreenWidth;
+constexpr uint16_t kScreenHeight = kScreenRotated ? kNativeScreenWidth : kNativeScreenHeight;
 
 using ExampleDisplay = GxEPD2_BW<ExampleEpdDriver, ExampleEpdDriver::HEIGHT>;
 
